@@ -1,0 +1,9 @@
+<svg width="320" height="92" viewBox="0 0 320 92" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect x="1" y="1" width="318" height="90" rx="14" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="2"/>
+  <rect x="18" y="19" width="54" height="54" rx="12" fill="#DBEAFE"/>
+  <path d="M36 33H54V39H36V33Z" fill="#2563EB"/>
+  <path d="M30 45H60V51H30V45Z" fill="#2563EB"/>
+  <path d="M36 57H54V63H36V57Z" fill="#2563EB"/>
+  <text x="86" y="43" fill="#0F172A" font-size="18" font-family="Arial, sans-serif" font-weight="700">UMAI</text>
+  <text x="86" y="63" fill="#334155" font-size="14" font-family="Arial, sans-serif" font-weight="600">BROWSER EXTENSION</text>
+</svg>

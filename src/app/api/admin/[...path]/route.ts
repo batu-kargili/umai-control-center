@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 function upstreamAdminBaseUrl(): string {
   return (
     process.env.CONTROL_CENTER_ADMIN_API_URL?.trim() ||
-    "http://duvarai-service:8080/api/v1/admin"
+    "http://umai-service:8080/api/v1/admin"
   );
 }
 

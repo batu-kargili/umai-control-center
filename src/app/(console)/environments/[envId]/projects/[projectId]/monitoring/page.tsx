@@ -26,16 +26,18 @@ const percentFormatter = new Intl.NumberFormat("en-US", {
   style: "percent",
   maximumFractionDigits: 0,
 });
+const SECONDARY_HEX = "#0F62FE";
+const SECONDARY_SOFT_HEX = "#D6E4FF";
 const dayFormatter = new Intl.DateTimeFormat("en-US", {
   month: "short",
   day: "numeric",
 });
 const categoryTones = [
-  "bg-black",
-  "bg-zinc-800",
-  "bg-zinc-600",
-  "bg-zinc-500",
-  "bg-zinc-400",
+  "bg-secondary",
+  "bg-secondary/85",
+  "bg-secondary/70",
+  "bg-secondary/55",
+  "bg-secondary/40",
   "bg-zinc-300",
 ];
 const EMPTY_VALUE_TOKENS = new Set([
@@ -255,7 +257,7 @@ export default function MonitoringPage() {
   return (
     <div className="space-y-8 fade-up">
       <header>
-        <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">Insights</p>
+        <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-secondary/70">Insights</p>
         <h2 className="font-display text-4xl font-bold text-ink tracking-tight">Monitoring</h2>
         <p className="mt-1 text-sm text-slate">
           Real-time summary for {projectId.replace(/-/g, " ")}.
@@ -263,7 +265,7 @@ export default function MonitoringPage() {
       </header>
 
       <section className="grid gap-6 lg:grid-cols-3">
-        <div className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
@@ -306,7 +308,7 @@ export default function MonitoringPage() {
               </p>
               <p className="mt-2 text-3xl font-bold text-ink">{totalRequests}</p>
             </div>
-            <div className="rounded-xl bg-mint p-2 text-ink">
+            <div className="rounded-xl bg-secondary/10 p-2 text-secondary">
               <Activity className="w-5 h-5" />
             </div>
           </div>
@@ -325,7 +327,7 @@ export default function MonitoringPage() {
                   data={summary.trendSeries}
                   margin={{ top: 8, right: 8, left: -16, bottom: 0 }}
                 >
-                  <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" vertical={false} />
+                  <CartesianGrid stroke={SECONDARY_SOFT_HEX} strokeDasharray="3 3" vertical={false} />
                   <XAxis
                     dataKey="label"
                     tickLine={false}
@@ -346,17 +348,17 @@ export default function MonitoringPage() {
                     labelStyle={{ color: "#111827", fontWeight: 600 }}
                     contentStyle={{
                       borderRadius: 16,
-                      border: "1px solid rgba(148, 163, 184, 0.2)",
-                      boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)",
+                      border: "1px solid rgba(15, 98, 254, 0.18)",
+                      boxShadow: "0 12px 32px rgba(15, 98, 254, 0.12)",
                     }}
                   />
                   <Line
                     type="monotone"
                     dataKey="requests"
-                    stroke="#111111"
+                    stroke={SECONDARY_HEX}
                     strokeWidth={2.5}
                     dot={false}
-                    activeDot={{ r: 4 }}
+                    activeDot={{ r: 4, fill: SECONDARY_HEX, stroke: "#ffffff" }}
                   />
                   <Line
                     type="monotone"
@@ -365,7 +367,7 @@ export default function MonitoringPage() {
                     strokeWidth={2}
                     strokeDasharray="4 4"
                     dot={false}
-                    activeDot={{ r: 4 }}
+                    activeDot={{ r: 4, fill: "#dc2626", stroke: "#ffffff" }}
                   />
                 </RechartsLineChart>
               </ResponsiveContainer>
@@ -373,7 +375,7 @@ export default function MonitoringPage() {
           </div>
           <div className="mt-3 flex items-center gap-4 text-[11px] text-slate">
             <span className="inline-flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-black" />
+              <span className="h-2 w-2 rounded-full bg-secondary" />
               Requests
             </span>
             <span className="inline-flex items-center gap-2">
@@ -384,7 +386,7 @@ export default function MonitoringPage() {
           <p className="mt-2 text-xs text-slate">Unique requests and alerted requests over the last 7 days</p>
         </div>
 
-        <div className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
@@ -392,7 +394,7 @@ export default function MonitoringPage() {
               </p>
               <p className="mt-2 text-3xl font-bold text-ink">{detectionPercent}</p>
             </div>
-            <div className="rounded-xl bg-emerald-50 p-2 text-emerald-600">
+            <div className="rounded-xl bg-secondary/10 p-2 text-secondary">
               <Gauge className="w-5 h-5" />
             </div>
           </div>
@@ -400,7 +402,7 @@ export default function MonitoringPage() {
             <div
               className="flex h-16 w-16 items-center justify-center rounded-full"
               style={{
-                background: `conic-gradient(#111111 ${detectionDegrees}deg, #e2e8f0 0deg)`,
+                background: `conic-gradient(${SECONDARY_HEX} ${detectionDegrees}deg, #e2e8f0 0deg)`,
               }}
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white text-xs font-semibold text-ink">
@@ -416,7 +418,7 @@ export default function MonitoringPage() {
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[1.4fr_0.6fr]">
-        <div className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
@@ -424,7 +426,7 @@ export default function MonitoringPage() {
               </p>
               <h3 className="mt-2 text-lg font-semibold text-ink">Top categories</h3>
             </div>
-            <div className="rounded-xl bg-slate-100 p-2 text-slate-600">
+            <div className="rounded-xl bg-secondary/10 p-2 text-secondary">
               <LineChartIcon className="w-5 h-5" />
             </div>
           </div>
@@ -446,7 +448,7 @@ export default function MonitoringPage() {
                         {numberFormatter.format(item.count)} - {percent.toFixed(0)}%
                       </span>
                     </div>
-                    <div className="h-2 rounded-full bg-slate-100">
+                    <div className="h-2 rounded-full bg-secondary/10">
                       <div
                         className={`h-full rounded-full ${categoryTones[index % categoryTones.length]}`}
                         style={{ width: `${(item.count / summary.maxCategoryCount) * 100}%` }}
@@ -459,7 +461,7 @@ export default function MonitoringPage() {
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm">
+        <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm">
           <div className="mb-4 flex items-center justify-between">
             <h3 className="font-bold text-ink">Recent alerts</h3>
           </div>
@@ -477,7 +479,7 @@ export default function MonitoringPage() {
                     </p>
                     <p className="truncate text-[11px] text-slate">{recentAlertMeta(alert)}</p>
                   </div>
-                  <span className="shrink-0 text-[10px] text-slate">
+                  <span className="shrink-0 text-[10px] text-secondary/70">
                     {new Date(alert.created_at).toLocaleString()}
                   </span>
                 </div>

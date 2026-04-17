@@ -13,10 +13,10 @@ const DEFAULT_EXTENSION_ID =
 const PUBLIC_API_BASE = "/api/public";
 
 type ExtensionConnectRequest =
-  | { type: "DUVARAI_PING" }
-  | { type: "DUVARAI_DISCONNECT" }
+  | { type: "UMAI_PING" }
+  | { type: "UMAI_DISCONNECT" }
   | {
-      type: "DUVARAI_CONNECT";
+      type: "UMAI_CONNECT";
       payload: {
         tenantId: string;
         environment: "prod" | "stage";
@@ -127,7 +127,7 @@ async function verifyTenantConnection(
   tenantId: string
 ): Promise<boolean> {
   try {
-    const response = await sendToExtension(extensionId, { type: "DUVARAI_PING" }, 2500);
+    const response = await sendToExtension(extensionId, { type: "UMAI_PING" }, 2500);
     return (
       response.ok === true &&
       response.state?.configured === true &&
@@ -211,7 +211,7 @@ export default function ExtensionConnectPage() {
     }
 
     const payload: ExtensionConnectRequest = {
-      type: "DUVARAI_CONNECT",
+      type: "UMAI_CONNECT",
       payload: {
         tenantId,
         environment,
@@ -292,7 +292,7 @@ export default function ExtensionConnectPage() {
     setStatusTone("neutral");
     setStatusText("Disconnecting local extension connection...");
     try {
-      const response = await sendToExtension(extensionId, { type: "DUVARAI_DISCONNECT" });
+      const response = await sendToExtension(extensionId, { type: "UMAI_DISCONNECT" });
       if (!response.ok) {
         throw new Error(response.error || "Extension rejected disconnect request.");
       }
@@ -313,7 +313,7 @@ export default function ExtensionConnectPage() {
     setStatusTone("neutral");
     setStatusText("Checking extension availability...");
     try {
-      const response = await sendToExtension(extensionId, { type: "DUVARAI_PING" });
+      const response = await sendToExtension(extensionId, { type: "UMAI_PING" });
       if (!response.ok) {
         throw new Error(response.error || "Extension ping failed.");
       }

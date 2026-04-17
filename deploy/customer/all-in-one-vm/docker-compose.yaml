@@ -1,0 +1,249 @@
+name: umai-all-in-one-vm
+
+x-umai-engine-env: &umai-engine-env
+  LICENSE_KEY: ${UMAI_LICENSE_KEY:-}
+  LOG_LEVEL: ${ENGINE_LOG_LEVEL:-INFO}
+  REDIS_URL: ${UMAI_ENGINE_REDIS_URL:-redis://redis:6379/0}
+  REQUIRE_REDIS: "true"
+  SNAPSHOT_SIGNING_KEY: ${UMAI_SNAPSHOT_SIGNING_KEY:?set UMAI_SNAPSHOT_SIGNING_KEY}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+  GROQ_API_KEY: ${GROQ_API_KEY:-}
+  HF_TOKEN: ${HF_TOKEN:-}
+
+x-umai-service-env: &umai-service-env
+  DUVARAI_LOG_LEVEL: ${SERVICE_LOG_LEVEL:-INFO}
+  DUVARAI_DATABASE_ENGINE: ${DUVARAI_DATABASE_ENGINE:-oracle}
+  DUVARAI_DATABASE_URL: ${DUVARAI_DATABASE_URL:-oracle+oracledb_async://umai_app:ChangeMe123@oracle-free:1521/?service_name=FREEPDB1}
+  DUVARAI_DATABASE_POOL_SIZE: ${DUVARAI_DATABASE_POOL_SIZE:-5}
+  DUVARAI_DATABASE_MAX_OVERFLOW: ${DUVARAI_DATABASE_MAX_OVERFLOW:-10}
+  DUVARAI_DATABASE_CONNECT_TIMEOUT_SECONDS: ${DUVARAI_DATABASE_CONNECT_TIMEOUT_SECONDS:-}
+  DUVARAI_AI_ENGINE_BASE_URL: http://umai-engine:9000
+  DUVARAI_CORS_ALLOW_ORIGINS: ${DUVARAI_CORS_ALLOW_ORIGINS:-["http://umai-console.test:3000"]}
+  DUVARAI_REDIS_URL: ${DUVARAI_REDIS_URL:-redis://redis:6379/0}
+  DUVARAI_REQUIRE_REDIS: "true"
+  DUVARAI_SNAPSHOT_SIGNING_KEY: ${UMAI_SNAPSHOT_SIGNING_KEY:?set UMAI_SNAPSHOT_SIGNING_KEY}
+  DUVARAI_SNAPSHOT_SIGNING_KEY_ID: ${UMAI_SNAPSHOT_SIGNING_KEY_ID:-default}
+  DUVARAI_LICENSE_TOKEN: ${UMAI_LICENSE_KEY:-}
+  DUVARAI_LICENSE_FILE: /etc/duvarai/license.json
+  DUVARAI_LICENSE_PUBLIC_KEY: ${DUVARAI_LICENSE_PUBLIC_KEY:-}
+  DUVARAI_LICENSE_STRICT: ${DUVARAI_LICENSE_STRICT:-false}
+  DUVARAI_STORE_REQUEST_PAYLOADS: ${DUVARAI_STORE_REQUEST_PAYLOADS:-false}
+  DUVARAI_AUDIT_REDACTION_ENABLED: ${DUVARAI_AUDIT_REDACTION_ENABLED:-true}
+  DUVARAI_AUDIT_REDACTION_PATTERNS_JSON: ${DUVARAI_AUDIT_REDACTION_PATTERNS_JSON:-}
+  DUVARAI_SIEM_ENDPOINTS_JSON: ${DUVARAI_SIEM_ENDPOINTS_JSON:-}
+  DUVARAI_ADMIN_JWT_HS256_SECRET: ${DUVARAI_ADMIN_JWT_HS256_SECRET:-}
+  DUVARAI_ENFORCE_ADMIN_JWT: ${DUVARAI_ENFORCE_ADMIN_JWT:-false}
+  DUVARAI_EXTENSION_INGEST_BEARER_TOKEN: ${DUVARAI_EXTENSION_INGEST_BEARER_TOKEN:-}
+  DUVARAI_EXTENSION_INGEST_JWT_HS256_SECRET: ${EXTENSION_CONNECT_JWT_SECRET:?set EXTENSION_CONNECT_JWT_SECRET}
+  DUVARAI_EXTENSION_POLICY_JSON: ${DUVARAI_EXTENSION_POLICY_JSON:-}
+  DUVARAI_EXTENSION_BOOTSTRAP_PUBLIC_KEY_PEM: ${DUVARAI_EXTENSION_BOOTSTRAP_PUBLIC_KEY_PEM:-}
+  DUVARAI_DEFAULT_GUARDRAIL_LLM_PROVIDER: ${DUVARAI_DEFAULT_GUARDRAIL_LLM_PROVIDER:-CUSTOMER_ONPREM}
+  DUVARAI_DEFAULT_GUARDRAIL_LLM_BASE_URL: ${DUVARAI_DEFAULT_GUARDRAIL_LLM_BASE_URL:?set DUVARAI_DEFAULT_GUARDRAIL_LLM_BASE_URL}
+  DUVARAI_DEFAULT_GUARDRAIL_LLM_MODEL: ${DUVARAI_DEFAULT_GUARDRAIL_LLM_MODEL:?set DUVARAI_DEFAULT_GUARDRAIL_LLM_MODEL}
+  DUVARAI_DEFAULT_GUARDRAIL_LLM_TIMEOUT_MS: ${DUVARAI_DEFAULT_GUARDRAIL_LLM_TIMEOUT_MS:-2000}
+  DUVARAI_DEFAULT_GUARDRAIL_LLM_AUTH_TYPE: ${DUVARAI_DEFAULT_GUARDRAIL_LLM_AUTH_TYPE:-header}
+  DUVARAI_DEFAULT_GUARDRAIL_LLM_AUTH_SECRET_ENV: ${DUVARAI_DEFAULT_GUARDRAIL_LLM_AUTH_SECRET_ENV:-LLM_API_KEY}
+  DUVARAI_DEFAULT_GUARDRAIL_LLM_AUTH_HEADER_NAME: ${DUVARAI_DEFAULT_GUARDRAIL_LLM_AUTH_HEADER_NAME:-api-key}
+  DUVARAI_OPENAI_API_KEY: ${DUVARAI_OPENAI_API_KEY:-}
+  DUVARAI_OPENAI_MODEL: ${DUVARAI_OPENAI_MODEL:-gpt-4o-mini}
+  DUVARAI_OPENAI_BASE_URL: ${DUVARAI_OPENAI_BASE_URL:-https://api.openai.com/v1}
+  DUVARAI_OPENAI_TIMEOUT_SECONDS: ${DUVARAI_OPENAI_TIMEOUT_SECONDS:-25}
+
+x-umai-service-seed-env: &umai-service-seed-env
+  DUVARAI_SEED_TENANT_ID: ${DUVARAI_SEED_TENANT_ID:-72c1e7a6-cd8b-4e69-b0a4-1549582a98f8}
+  DUVARAI_SEED_TENANT_NAME: ${DUVARAI_SEED_TENANT_NAME:-XYZ Sigorta PoC}
+  DUVARAI_SEED_LICENSE_DAYS: ${DUVARAI_SEED_LICENSE_DAYS:-3650}
+  DUVARAI_SEED_LICENSE_PLAN: ${DUVARAI_SEED_LICENSE_PLAN:-enterprise}
+  DUVARAI_SEED_ALLOW_LLM_CALLS: ${DUVARAI_SEED_ALLOW_LLM_CALLS:-true}
+
+services:
+  oracle-free:
+    image: gvenzl/oracle-free:23-slim
+    environment:
+      ORACLE_PASSWORD: ${ORACLE_SYS_PASSWORD:-OracleSys123}
+      ORACLE_CHARACTERSET: ${ORACLE_CHARACTERSET:-AL32UTF8}
+    ports:
+      - "127.0.0.1:${ORACLE_PORT:-1521}:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./bootstrap/oracle/01-umai-bootstrap.sql:/container-entrypoint-initdb.d/01-umai-bootstrap.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 20s
+      timeout: 10s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  openldap:
+    image: osixia/openldap:1.5.0
+    environment:
+      LDAP_ORGANISATION: ${LDAP_ORGANISATION:-UMAI Local}
+      LDAP_DOMAIN: ${LDAP_DOMAIN:-umai.local}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=umai,dc=local}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD:-admin123}
+      LDAP_CONFIG_PASSWORD: ${LDAP_CONFIG_PASSWORD:-config123}
+      LDAP_REMOVE_CONFIG_AFTER_SETUP: "false"
+      LDAP_TLS: "false"
+    ports:
+      - "127.0.0.1:${LDAP_PORT:-1389}:389"
+    volumes:
+      - ./bootstrap/ldap:/container/service/slapd/assets/config/bootstrap/ldif/custom:ro
+      - openldap-data:/var/lib/ldap
+      - openldap-config:/etc/ldap/slapd.d
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "ldapwhoami -x -H ldap://localhost:389 -D '${LDAP_BIND_DN:-cn=admin,dc=umai,dc=local}' -w '${LDAP_BIND_PASSWORD:-admin123}' >/dev/null 2>&1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  phpldapadmin:
+    image: osixia/phpldapadmin:0.9.0
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: openldap
+      PHPLDAPADMIN_HTTPS: ${PHPLDAPADMIN_HTTPS:-false}
+    ports:
+      - "127.0.0.1:${PHPLDAPADMIN_PORT:-8088}:80"
+    depends_on:
+      openldap:
+        condition: service_healthy
+    restart: unless-stopped
+
+  umai-engine:
+    image: ${UMAI_ENGINE_IMAGE:?set UMAI_ENGINE_IMAGE}
+    environment:
+      <<: *umai-engine-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${ENGINE_PORT:-8081}:9000"
+    restart: unless-stopped
+
+  umai-service-migrator:
+    image: ${UMAI_SERVICE_IMAGE:?set UMAI_SERVICE_IMAGE}
+    environment:
+      <<: *umai-service-env
+    depends_on:
+      oracle-free:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
+  umai-service-schema-repair:
+    image: ${UMAI_SERVICE_IMAGE:?set UMAI_SERVICE_IMAGE}
+    environment:
+      <<: *umai-service-env
+    depends_on:
+      oracle-free:
+        condition: service_healthy
+      umai-service-migrator:
+        condition: service_completed_successfully
+    command: ["python", "scripts/repair_oracle_schema.py"]
+
+  umai-service-seed:
+    image: ${UMAI_SERVICE_IMAGE:?set UMAI_SERVICE_IMAGE}
+    environment:
+      <<: [*umai-service-env, *umai-service-seed-env]
+    depends_on:
+      oracle-free:
+        condition: service_healthy
+      umai-service-schema-repair:
+        condition: service_completed_successfully
+    command: ["python", "seed.py"]
+
+  umai-service:
+    image: ${UMAI_SERVICE_IMAGE:?set UMAI_SERVICE_IMAGE}
+    environment:
+      <<: *umai-service-env
+      UMAI_RUN_DB_MIGRATIONS: "false"
+    depends_on:
+      oracle-free:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      umai-engine:
+        condition: service_healthy
+      umai-service-seed:
+        condition: service_completed_successfully
+    ports:
+      - "${SERVICE_PORT:-8080}:8080"
+    volumes:
+      - ${UMAI_LICENSE_DIR:-./license}:/etc/duvarai:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/readyz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  umai-control-center:
+    image: ${UMAI_CONTROLCENTER_IMAGE:?set UMAI_CONTROLCENTER_IMAGE}
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      CONTROL_CENTER_SESSION_SECRET: ${CONTROL_CENTER_SESSION_SECRET:?set CONTROL_CENTER_SESSION_SECRET}
+      CONTROL_CENTER_SESSION_TTL_SECONDS: ${CONTROL_CENTER_SESSION_TTL_SECONDS:-43200}
+      CONTROL_CENTER_SESSION_SECURE: ${CONTROL_CENTER_SESSION_SECURE:-false}
+      CONTROL_CENTER_ADMIN_API_URL: http://umai-service:8080/api/v1/admin
+      CONTROL_CENTER_PUBLIC_API_URL: http://umai-service:8080/api/v1
+      LDAP_URL: ${LDAP_URL:-ldap://openldap:389}
+      LDAP_BIND_DN: ${LDAP_BIND_DN:-cn=admin,dc=umai,dc=local}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-admin123}
+      LDAP_USER_SEARCH_BASE: ${LDAP_USER_SEARCH_BASE:-ou=users,dc=umai,dc=local}
+      LDAP_USER_SEARCH_FILTER: ${LDAP_USER_SEARCH_FILTER:-}
+      LDAP_USERNAME_ATTRIBUTE: ${LDAP_USERNAME_ATTRIBUTE:-uid}
+      LDAP_DISPLAY_NAME_ATTRIBUTE: ${LDAP_DISPLAY_NAME_ATTRIBUTE:-cn}
+      LDAP_EMAIL_ATTRIBUTE: ${LDAP_EMAIL_ATTRIBUTE:-mail}
+      LDAP_GROUP_ATTRIBUTE: ${LDAP_GROUP_ATTRIBUTE:-memberOf}
+      LDAP_ALLOWED_GROUPS: ${LDAP_ALLOWED_GROUPS:-}
+      LDAP_TIMEOUT_MS: ${LDAP_TIMEOUT_MS:-10000}
+      LDAP_CONNECT_TIMEOUT_MS: ${LDAP_CONNECT_TIMEOUT_MS:-10000}
+      LDAP_INSECURE_SKIP_VERIFY: ${LDAP_INSECURE_SKIP_VERIFY:-false}
+      CONTROL_CENTER_ORGANIZATION_ID: ${CONTROL_CENTER_ORGANIZATION_ID:?set CONTROL_CENTER_ORGANIZATION_ID}
+      CONTROL_CENTER_ORGANIZATION_NAME: ${CONTROL_CENTER_ORGANIZATION_NAME:?set CONTROL_CENTER_ORGANIZATION_NAME}
+      CONTROL_CENTER_ORGANIZATION_PLAN: ${CONTROL_CENTER_ORGANIZATION_PLAN:-enterprise}
+      CONTROL_CENTER_ORGANIZATION_LICENSE_EXPIRES_AT: ${CONTROL_CENTER_ORGANIZATION_LICENSE_EXPIRES_AT:?set CONTROL_CENTER_ORGANIZATION_LICENSE_EXPIRES_AT}
+      CONTROL_CENTER_DEFAULT_ENVIRONMENT_ID: ${CONTROL_CENTER_DEFAULT_ENVIRONMENT_ID:-}
+      CONTROL_CENTER_DEFAULT_PROJECT_ID: ${CONTROL_CENTER_DEFAULT_PROJECT_ID:-}
+      EXTENSION_CONNECT_JWT_SECRET: ${EXTENSION_CONNECT_JWT_SECRET:?set EXTENSION_CONNECT_JWT_SECRET}
+      NEXT_PUBLIC_UMAI_EXTENSION_ID: ${NEXT_PUBLIC_UMAI_EXTENSION_ID:-cpcepfngmlphbdmfpnkhlbhhiijeppcn}
+    depends_on:
+      openldap:
+        condition: service_healthy
+      umai-service:
+        condition: service_healthy
+    ports:
+      - "${CONTROL_CENTER_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/login >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+volumes:
+  oracle-data:
+  redis-data:
+  openldap-data:
+  openldap-config:

@@ -34,9 +34,9 @@ import {
 function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding" }) {
   if (variant === "onboarding") {
     return (
-      <header className="h-[56px] bg-white border-b border-slate/10 text-ink flex items-center justify-between px-6 z-50">
+      <header className="h-[56px] bg-white border-b border-secondary/10 text-ink flex items-center justify-between px-6 z-50">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate/5 border border-slate/10">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-secondary/15 bg-secondary/8">
             <Image
               src={BRAND_LOGO_WHITE}
               alt={`${BRAND_NAME} Logo`}
@@ -46,7 +46,7 @@ function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding"
             />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="text-[11px] uppercase tracking-[0.3em] text-slate">Onboarding</span>
+            <span className="text-[11px] uppercase tracking-[0.3em] text-secondary/70">Onboarding</span>
             <span className="text-sm font-semibold">{CONTROL_CENTER_NAME}</span>
           </div>
         </div>
@@ -78,7 +78,7 @@ function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding"
   const userInitial = userLabel.charAt(0).toUpperCase();
 
   return (
-    <header className="h-[56px] bg-black text-white flex items-center justify-between px-4 z-50">
+    <header className="h-[56px] border-b border-secondary/20 bg-black text-white flex items-center justify-between px-4 z-50">
       <div className="flex items-center gap-4">
         <Link href="/home" className="group flex items-center">
           <Image
@@ -96,33 +96,33 @@ function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding"
         <div className="relative group w-[320px]">
           <input
             placeholder="Search"
-            className="w-full h-8 rounded-md bg-white/10 border-none px-4 pl-10 text-xs font-medium text-white placeholder-white/40 focus:bg-white/15 focus:outline-none transition-all"
+            className="w-full h-8 rounded-md bg-white/10 border border-white/10 px-4 pl-10 text-xs font-medium text-white placeholder-white/40 transition-all focus:bg-white/15 focus:border-secondary/40 focus:outline-none focus:ring-2 focus:ring-secondary/25"
           />
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-white/60 transition-colors w-4 h-4" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/30 group-focus-within:text-secondary transition-colors w-4 h-4" />
           <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            <span className="text-[10px] text-white/20 border border-white/20 rounded px-1">K</span>
+            <span className="text-[10px] text-secondary/60 border border-secondary/30 rounded px-1">K</span>
           </div>
         </div>
 
         <div className="relative flex items-center gap-4" ref={menuRef}>
-          <button title="Notifications" className="text-white/60 hover:text-white transition-colors">
+          <button title="Notifications" className="text-white/60 hover:text-secondary transition-colors">
             <Bell className="w-5 h-5" />
           </button>
-          <button title="Help" className="text-white/60 hover:text-white transition-colors">
+          <button title="Help" className="text-white/60 hover:text-secondary transition-colors">
             <HelpCircle className="w-5 h-5" />
           </button>
           <button
             title="Menu"
-            className={`text-white/60 hover:text-white transition-colors ${menuOpen ? "text-white" : ""}`}
+            className={`text-white/60 hover:text-secondary transition-colors ${menuOpen ? "text-secondary" : ""}`}
             onClick={() => setMenuOpen((prev) => !prev)}
           >
             <Menu className="w-6 h-6" />
           </button>
 
           {menuOpen && (
-            <div className="absolute right-0 top-[52px] w-[280px] rounded-2xl border border-slate/10 bg-white text-ink shadow-soft z-50">
-              <div className="p-4 border-b border-slate/10 flex items-center gap-3">
-                <div className="h-10 w-10 rounded-full bg-slate/100 text-white flex items-center justify-center text-sm font-bold">
+            <div className="absolute right-0 top-[52px] z-50 w-[280px] rounded-2xl border border-secondary/12 bg-white text-ink shadow-soft">
+              <div className="p-4 border-b border-secondary/10 flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-secondary text-white flex items-center justify-center text-sm font-bold shadow-accent">
                   {userInitial}
                 </div>
                 <div className="min-w-0">
@@ -150,10 +150,10 @@ function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding"
                   </span>
                 </div>
               </div>
-              <div className="p-4 border-t border-slate/10">
+              <div className="p-4 border-t border-secondary/10">
                 <a
                   href="/api/auth/logout?returnTo=/login"
-                  className="inline-flex w-full items-center justify-center rounded-xl bg-ink px-4 py-2 text-xs font-semibold text-white hover:bg-[#0b1322] transition"
+                  className="inline-flex w-full items-center justify-center rounded-xl bg-secondary px-4 py-2 text-xs font-semibold text-white shadow-accent transition hover:bg-secondary/90"
                 >
                   Sign out
                 </a>
@@ -193,11 +193,16 @@ function Breadcrumbs() {
   });
 
   return (
-    <nav className="mb-6 flex items-center overflow-x-auto whitespace-nowrap border-b border-gray-100 bg-white px-8 py-2 text-[13px] font-medium text-slate/80 scrollbar-hide">
+    <nav className="mb-6 flex items-center overflow-x-auto whitespace-nowrap border-b border-secondary/10 bg-white px-8 py-2 text-[13px] font-medium text-slate/80 scrollbar-hide">
       {crumbs.map((crumb, i) => (
         <div key={crumb.href} className="flex items-center shrink-0">
           {i > 0 && <ChevronRight className="mx-2 text-gray-300 w-3 h-3" />}
-          <Link href={crumb.href} className="capitalize transition-colors hover:text-ink">
+          <Link
+            href={crumb.href}
+            className={`capitalize transition-colors hover:text-secondary ${
+              i === crumbs.length - 1 ? "text-secondary" : ""
+            }`}
+          >
             {crumb.label}
           </Link>
         </div>
@@ -215,7 +220,7 @@ function NavRail() {
   ];
 
   return (
-    <div className="w-[56px] bg-[#fcfcfc] border-r border-gray-100 flex flex-col items-center py-6 gap-6 z-50 shrink-0 h-full">
+    <div className="w-[56px] bg-[#fcfdff] border-r border-secondary/10 flex flex-col items-center py-6 gap-6 z-50 shrink-0 h-full">
       {railItems.map((item) => (
         (() => {
           const isExtensionRail = item.href === "/extension/connect";
@@ -229,13 +234,13 @@ function NavRail() {
               title={item.label}
               className={`group relative h-10 w-10 flex items-center justify-center rounded-lg transition-all duration-300 ${
                 isActive
-                  ? "scale-110 bg-ink text-white shadow-lg shadow-black/10"
-                  : "text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+                  ? "scale-110 bg-secondary text-white shadow-accent"
+                  : "text-gray-400 hover:bg-secondary/8 hover:text-secondary"
               }`}
             >
               <item.icon className="w-5 h-5 group-hover:scale-110 transition-transform" />
               {isActive && (
-                <div className="absolute -left-0.5 top-2 bottom-2 w-1 rounded-r-full bg-ink" />
+                <div className="absolute -left-0.5 top-2 bottom-2 w-1 rounded-r-full bg-secondary" />
               )}
             </Link>
           );
@@ -256,9 +261,9 @@ function Sidebar() {
   const isProjectView = !!selectedProject;
 
   return (
-    <aside className="w-[240px] flex-col bg-white border-r border-gray-100 h-full flex z-40 shrink-0">
-      <div className="p-5 border-b border-gray-50">
-        <p className="text-[11px] font-semibold text-gray-400 capitalize mb-1">
+    <aside className="w-[240px] flex-col bg-white border-r border-secondary/10 h-full flex z-40 shrink-0">
+      <div className="p-5 border-b border-secondary/10">
+        <p className="text-[11px] font-semibold text-secondary/70 capitalize mb-1">
           {isProjectView ? "Project" : "Environment"}
         </p>
         <h3 className="text-xl font-bold text-gray-900 truncate capitalize leading-tight">
@@ -272,8 +277,8 @@ function Sidebar() {
             <Link
               href={`/environments/${selectedEnvironment}`}
               className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 ${pathname === `/environments/${selectedEnvironment}`
-                ? "border border-black/10 bg-mint text-ink font-bold"
-                : "text-gray-600 hover:bg-gray-50 font-medium"
+                ? "border border-secondary/15 bg-secondary/8 text-secondary font-bold"
+                : "text-gray-600 hover:bg-secondary/5 hover:text-secondary font-medium"
                 }`}
             >
               <LayoutDashboard className="w-5 h-5 opacity-70" />
@@ -281,7 +286,7 @@ function Sidebar() {
             </Link>
 
             {selectedProject && (
-              <div className="mt-1 ml-4 pl-4 border-l border-gray-100 flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-300">
+              <div className="mt-1 ml-4 pl-4 border-l border-secondary/10 flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-300">
                 {[
                   { label: "Monitoring", href: "monitoring", icon: Activity },
                   { label: "Guardrails", href: "guardrails", icon: Shield },
@@ -299,8 +304,8 @@ function Sidebar() {
                       key={sub.href}
                       href={fullHref}
                       className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${isActive
-                        ? "bg-mint text-ink font-bold"
-                        : "text-gray-500 hover:text-gray-900 hover:bg-gray-50 font-medium"
+                        ? "bg-secondary/8 text-secondary font-bold"
+                        : "text-gray-500 hover:text-secondary hover:bg-secondary/5 font-medium"
                         }`}
                     >
                       <sub.icon className="w-4 h-4 opacity-70 shrink-0" />
@@ -314,15 +319,15 @@ function Sidebar() {
         )}
       </nav>
 
-      <div className="mt-auto p-4 border-t border-gray-50 bg-gray-50/30 flex flex-col gap-2">
-        <Link href="#" className="flex items-center gap-3 text-[11px] font-semibold text-gray-500 hover:text-gray-900 transition-colors px-2 py-1">
+      <div className="mt-auto p-4 border-t border-secondary/10 bg-secondary/5 flex flex-col gap-2">
+        <Link href="#" className="flex items-center gap-3 px-2 py-1 text-[11px] font-semibold text-gray-500 transition-colors hover:text-secondary">
           <MessageSquare className="w-4 h-4" /> Chat with us
         </Link>
-        <Link href="#" className="flex items-center justify-between bg-white p-3 rounded-lg text-[11px] font-bold text-gray-700 hover:border-black/15 transition-all border border-gray-100 shadow-sm">
+        <Link href="#" className="flex items-center justify-between bg-white p-3 rounded-lg text-[11px] font-bold text-gray-700 transition-all border border-secondary/10 hover:border-secondary/25 hover:shadow-soft">
           <div className="flex items-center gap-2">
             <LifeBuoy className="w-4 h-4" /> Support ticket
           </div>
-          <span className="rounded bg-ink px-1.5 py-0.5 text-[9px] font-black uppercase tracking-tighter text-white">NEW</span>
+          <span className="rounded bg-secondary px-1.5 py-0.5 text-[9px] font-black uppercase tracking-tighter text-white">NEW</span>
         </Link>
       </div>
     </aside>
@@ -385,7 +390,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   return (
     <ConsoleProvider>
       <ConsoleGate>
-        <div className="flex flex-col h-screen overflow-hidden bg-white font-sans selection:bg-black/10 italic-none">
+        <div className="flex flex-col h-screen overflow-hidden bg-white font-sans selection:bg-secondary/15 italic-none">
           <TopNavbar variant={isOnboarding ? "onboarding" : "default"} />
 
           <div className="flex flex-1 overflow-hidden">

@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 function upstreamPublicBaseUrl(): string {
   return (
     process.env.CONTROL_CENTER_PUBLIC_API_URL?.trim() ||
-    "http://duvarai-service:8080/api/v1"
+    "http://umai-service:8080/api/v1"
   );
 }
 

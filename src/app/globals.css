@@ -7,6 +7,7 @@
   --sand: 255 255 255;
   --slate: 82 82 91;
   --accent: 17 17 17;
+  --secondary: 15 98 254;
   --mint: 245 245 245;
   --danger: 220 38 38;
 }
@@ -17,7 +18,7 @@ body {
 }
 
 ::selection {
-  background: rgba(17, 17, 17, 0.12);
+  background: rgba(15, 98, 254, 0.16);
   color: #111111;
 }
 

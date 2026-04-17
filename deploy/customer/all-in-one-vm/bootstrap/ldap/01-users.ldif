@@ -1,0 +1,25 @@
+dn: ou=users,dc=umai,dc=local
+objectClass: organizationalUnit
+ou: users
+
+dn: uid=operator,ou=users,dc=umai,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: operator
+cn: Operator User
+sn: User
+mail: operator@umai.local
+userPassword: operator123
+
+dn: uid=auditor,ou=users,dc=umai,dc=local
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: top
+uid: auditor
+cn: Auditor User
+sn: User
+mail: auditor@umai.local
+userPassword: auditor123

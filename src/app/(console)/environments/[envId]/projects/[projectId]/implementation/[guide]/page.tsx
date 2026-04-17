@@ -64,16 +64,16 @@ queue.enqueue(buildLedgerEvents({ decision, prompt: finalPrompt }));`,
       "On fail, return a safe fallback or trigger a review step.",
     ],
     codeLabel: "Pseudocode (TypeScript)",
-    code: `const duvarai = new DuvarAI({ baseUrl, apiKey });
+    code: `const umai = new Umai({ baseUrl, apiKey });
 
-const job = await duvarai.guardrails.runAsync({
+const job = await umai.guardrails.runAsync({
   guardrail_id: "pii-default",
   input: userMessage,
   metadata: { env_id, project_id }
 });
 
 const draft = await agent.run({ input: userMessage });
-const verdict = await duvarai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
+const verdict = await umai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
 
 return verdict.passed ? draft : safeFallback;`,
     note: "Use webhooks or a background worker if your guardrails take longer than a user session.",
@@ -89,16 +89,16 @@ return verdict.passed ? draft : safeFallback;`,
       "Log failures and surface safe alternatives to the user.",
     ],
     codeLabel: "Pseudocode (Python)",
-    code: `duvarai = DuvarAI(base_url=BASE_URL, api_key=API_KEY)
+    code: `umai = Umai(base_url=BASE_URL, api_key=API_KEY)
 
-job = duvarai.guardrails.run_async({
+job = umai.guardrails.run_async({
   "guardrail_id": "prompt-injection",
   "input": user_message,
   "metadata": {"env_id": env_id, "project_id": project_id}
 })
 
 result = adk_agent.run(user_message)
-verdict = duvarai.guardrails.wait_for(job["id"], timeout_ms=15000)
+verdict = umai.guardrails.wait_for(job["id"], timeout_ms=15000)
 
 return result if verdict["passed"] else safe_fallback`,
     note: "Capture the ADK plan trace and include it in metadata for richer policy context.",
@@ -114,13 +114,13 @@ return result if verdict["passed"] else safe_fallback`,
       "Fallback to a safe response if policies fail.",
     ],
     codeLabel: "Pseudocode (TypeScript)",
-    code: `const job = await duvarai.guardrails.runAsync({
+    code: `const job = await umai.guardrails.runAsync({
   guardrail_id: "safety-core",
   input: userMessage
 });
 
 const completion = await xai.chat({ messages: history });
-const verdict = await duvarai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
+const verdict = await umai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
 
 return verdict.passed ? completion : safeFallback;`,
     note: "Pair the verdict with audit logs to see which policy triggered a block.",
@@ -136,13 +136,13 @@ return verdict.passed ? completion : safeFallback;`,
       "If blocked, return a compliant response or request clarification.",
     ],
     codeLabel: "Pseudocode (Python)",
-    code: `job = duvarai.guardrails.run_async({
+    code: `job = umai.guardrails.run_async({
   "guardrail_id": "data-leakage",
   "input": user_message
 })
 
 reply = anthropic.messages.create(model="claude-3", messages=history)
-verdict = duvarai.guardrails.wait_for(job["id"], timeout_ms=15000)
+verdict = umai.guardrails.wait_for(job["id"], timeout_ms=15000)
 
 return reply if verdict["passed"] else safe_fallback`,
     note: "Consider adding a second check for tool outputs before sending the final message.",
@@ -158,13 +158,13 @@ return reply if verdict["passed"] else safe_fallback`,
       "Send a safe response or re-run with a stricter prompt if needed.",
     ],
     codeLabel: "Pseudocode (Python)",
-    code: `job = duvarai.guardrails.run_async({
+    code: `job = umai.guardrails.run_async({
   "guardrail_id": "pii-default",
   "input": user_message
 })
 
 output = chain.invoke({"input": user_message})
-verdict = duvarai.guardrails.wait_for(job["id"], timeout_ms=15000)
+verdict = umai.guardrails.wait_for(job["id"], timeout_ms=15000)
 
 return output if verdict["passed"] else safe_fallback`,
     note: "Use LangChain callbacks to attach UMAI verdicts to traces.",

@@ -12,7 +12,7 @@ export interface TenantBinding {
 
 type TenantMap = Record<string, TenantBinding>;
 
-const STORAGE_KEY = "duvarai.tenants";
+const STORAGE_KEY = "umai.tenants";
 
 function loadMap(): TenantMap {
   if (typeof window === "undefined") return {};

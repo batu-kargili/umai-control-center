@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="130" height="40" viewBox="0 0 130 40">
+  <rect width="130" height="40" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+  <text x="12" y="25" font-family="Arial, sans-serif" font-size="14" font-weight="700">
+    <tspan fill="#4285f4">G</tspan>
+    <tspan fill="#ea4335">o</tspan>
+    <tspan fill="#fbbc05">o</tspan>
+    <tspan fill="#4285f4">g</tspan>
+    <tspan fill="#34a853">l</tspan>
+    <tspan fill="#ea4335">e</tspan>
+  </text>
+  <text x="78" y="25" font-family="Arial, sans-serif" font-size="13" font-weight="700" fill="#111827">ADK</text>
+</svg>

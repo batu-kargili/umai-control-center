@@ -187,7 +187,7 @@ async function callUmaiGuard(input: {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        "X-DuvarAI-Api-Key": input.apiKey,
+        "X-Umai-Api-Key": input.apiKey,
       },
       body: JSON.stringify({
         conversation_id: input.conversationId,

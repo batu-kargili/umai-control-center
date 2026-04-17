@@ -98,14 +98,14 @@ export default function ImplementationPage({
             response so latency stays predictable.
           </p>
           <div className="rounded-2xl bg-slate-900 text-slate-100 p-4 text-xs font-mono leading-relaxed">
-            {`const job = await duvarai.guardrails.runAsync({
+            {`const job = await umai.guardrails.runAsync({
   guardrail_id: \"pii-default\",
   input: userMessage,
   metadata: { project_id, env_id }
 });
 
 const draft = await runtime.run({ input: userMessage });
-const verdict = await duvarai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
+const verdict = await umai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
 
 return verdict.passed ? draft : safeFallback;`}
           </div>

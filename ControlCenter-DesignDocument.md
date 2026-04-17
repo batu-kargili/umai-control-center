@@ -4,7 +4,7 @@
 | --- | --- |
 | **Version/Status** | v0.01 |
 | **Date** | 28/12/25 |
-| Content Description | Control Center is the operator-facing web UI for managing **tenants (organizations), environments, projects, guardrails, policies, licenses, keys**, and for **testing guardrails** and reviewing **usage/alerts**. It is a pure frontend application that communicates exclusively with **DuvarAI Service**. |
+| Content Description | Control Center is the operator-facing web UI for managing **tenants (organizations), environments, projects, guardrails, policies, licenses, keys**, and for **testing guardrails** and reviewing **usage/alerts**. It is a pure frontend application that communicates exclusively with **UMAI Service**. |
 
 ## Table of Contents
 
@@ -12,11 +12,11 @@
 
 **1.1 Purpose of Control Center**
 
-**1.2 How Control Center Fits into DuvarAI Architecture**
+**1.2 How Control Center Fits into UMAI Architecture**
 
 **1.3 Responsibilities vs Non-Responsibilities**
 
-**1.4 High-Level User Flow (Operator → Control Center → DuvarAI Service → AI Engine)**
+**1.4 High-Level User Flow (Operator → Control Center → UMAI Service → AI Engine)**
 
 ### 2. UX Information Architecture
 
@@ -107,9 +107,9 @@ Control Center provides operators (Enterprise security, IT, platform teams) a se
 
 ---
 
-## 1.2 How Control Center Fits into DuvarAI Architecture
+## 1.2 How Control Center Fits into UMAI Architecture
 
-**Control Center (Next.js)** is the operator UI. It calls **DuvarAI Service (FastAPI)**:
+**Control Center (Next.js)** is the operator UI. It calls **UMAI Service (FastAPI)**:
 
 - Control Center never calls AI Engine
 - Control Center never reads Redis
@@ -146,7 +146,7 @@ All operations go through Service APIs:
 ## 1.4 High-Level User Flow (Operator → Control Center → Service → Engine)
 
 1. Operator logs into Control Center
-2. Control Center receives a session (cookie/JWT) from DuvarAI Service
+2. Control Center receives a session (cookie/JWT) from UMAI Service
 3. Operator selects **Tenant → Environment → Project**
 4. Operator creates/edits guardrails and policies (draft)
 5. Operator presses **Publish**
@@ -542,7 +542,7 @@ UI threats:
 
 Environment variables:
 
-- `DUVARAI_SERVICE_BASE_URL` (internal)
+- `UMAI_SERVICE_BASE_URL` (internal)
 - `PUBLIC_APP_BASE_URL` (for redirects)
 - feature flags (optional)
 
@@ -552,8 +552,8 @@ Environment variables:
 
 Recommended:
 
-- `https://duvarai.example.local/console` → Control Center
-- `https://duvarai.example.local/api` → DuvarAI Service
+- `https://umai.example.local/console` → Control Center
+- `https://umai.example.local/api` → UMAI Service
 
 ---
 
@@ -585,7 +585,7 @@ Deliver these pages end-to-end:
 
 ## Control Center UI/UX & Design Principles
 
-*DuvarAI culture: Microsoft-grade enterprise clarity + Confluent-grade operational rigor + OpenAI-grade simplicity & intelligence.*
+*UMAI culture: Microsoft-grade enterprise clarity + Confluent-grade operational rigor + OpenAI-grade simplicity & intelligence.*
 
 ---
 
@@ -852,7 +852,7 @@ Test page should be fast and comforting:
 
 ---
 
-# 9) Default “DuvarAI Look”
+# 9) Default “UMAI Look”
 
 If you want a one-liner guideline for designers/devs:
 

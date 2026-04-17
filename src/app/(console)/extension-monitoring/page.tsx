@@ -104,7 +104,7 @@ export default function ExtensionMonitoringPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-slate">Organization</p>
+          <p className="text-xs uppercase tracking-[0.3em] text-secondary/70">Organization</p>
           <h2 className="font-display text-3xl text-ink">Extension Monitoring</h2>
           <p className="text-sm text-slate">
             Browser-level AI usage telemetry from the UMAI extension.
@@ -113,7 +113,7 @@ export default function ExtensionMonitoringPage() {
         <div className="flex items-center gap-2">
           <Link
             href="/extension/connect"
-            className="inline-flex items-center gap-2 rounded-full border border-black/10 bg-ink px-4 py-2 text-xs font-semibold text-white"
+            className="inline-flex items-center gap-2 rounded-full border border-secondary/20 bg-secondary px-4 py-2 text-xs font-semibold text-white shadow-accent"
           >
             Connect Extension
           </Link>
@@ -121,7 +121,7 @@ export default function ExtensionMonitoringPage() {
             type="button"
             onClick={() => void refresh()}
             disabled={loading || !tenantId}
-            className="inline-flex items-center gap-2 rounded-full border border-slate/15 bg-white px-4 py-2 text-xs font-semibold text-slate"
+            className="inline-flex items-center gap-2 rounded-full border border-secondary/15 bg-white px-4 py-2 text-xs font-semibold text-secondary transition-colors hover:bg-secondary/5"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
@@ -136,15 +136,15 @@ export default function ExtensionMonitoringPage() {
       ) : null}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-2xl border border-slate/10 bg-white p-4 shadow-sm">
-          <p className="text-xs text-slate">Events (14d)</p>
-          <p className="mt-1 text-2xl font-semibold text-ink">
+        <div className="rounded-2xl border border-secondary/10 bg-white p-4 shadow-sm">
+          <p className="text-xs text-secondary/70">Events (14d)</p>
+          <p className="mt-1 text-2xl font-semibold text-secondary">
             {summary?.total_events ?? 0}
           </p>
         </div>
-        <div className="rounded-2xl border border-slate/10 bg-white p-4 shadow-sm">
-          <p className="text-xs text-slate">Devices</p>
-          <p className="mt-1 text-2xl font-semibold text-ink">
+        <div className="rounded-2xl border border-secondary/10 bg-white p-4 shadow-sm">
+          <p className="text-xs text-secondary/70">Devices</p>
+          <p className="mt-1 text-2xl font-semibold text-secondary">
             {summary?.unique_devices ?? 0}
           </p>
         </div>
@@ -168,12 +168,12 @@ export default function ExtensionMonitoringPage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-slate/10 bg-white p-5 shadow-sm">
+      <section className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <select
             value={siteFilter}
             onChange={(event) => setSiteFilter(event.target.value)}
-            className="h-9 rounded-full border border-slate/15 bg-white px-3 text-xs text-ink"
+            className="h-9 rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none"
           >
             <option value="all">All sites</option>
             <option value="chatgpt">ChatGPT</option>
@@ -183,7 +183,7 @@ export default function ExtensionMonitoringPage() {
           <select
             value={decisionFilter}
             onChange={(event) => setDecisionFilter(event.target.value)}
-            className="h-9 rounded-full border border-slate/15 bg-white px-3 text-xs text-ink"
+            className="h-9 rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none"
           >
             <option value="all">All decisions</option>
             <option value="allow">allow</option>
@@ -195,7 +195,7 @@ export default function ExtensionMonitoringPage() {
           <select
             value={chainFilter}
             onChange={(event) => setChainFilter(event.target.value)}
-            className="h-9 rounded-full border border-slate/15 bg-white px-3 text-xs text-ink"
+            className="h-9 rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none"
           >
             <option value="all">All chain status</option>
             <option value="valid">Chain valid</option>
@@ -206,13 +206,13 @@ export default function ExtensionMonitoringPage() {
             value={userFilter}
             onChange={(event) => setUserFilter(event.target.value)}
             placeholder="Search user (name/email/sub)"
-            className="h-9 min-w-[220px] rounded-full border border-slate/15 bg-white px-3 text-xs text-ink placeholder:text-slate/60"
+            className="h-9 min-w-[220px] rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink placeholder:text-slate/60 focus:border-secondary/40 focus:outline-none"
           />
         </div>
 
-        <div className="overflow-auto rounded-2xl border border-slate/10">
+        <div className="overflow-auto rounded-2xl border border-secondary/10">
           <table className="w-full min-w-[1100px] text-left text-xs">
-            <thead className="bg-slate/5 text-[11px] uppercase tracking-[0.18em] text-slate/70">
+            <thead className="bg-secondary/5 text-[11px] uppercase tracking-[0.18em] text-slate/70">
               <tr>
                 <th className="px-3 py-2">Time</th>
                 <th className="px-3 py-2">Site</th>
@@ -242,7 +242,7 @@ export default function ExtensionMonitoringPage() {
                 </tr>
               ) : (
                 filteredEvents.map((event) => (
-                  <tr key={event.id} className="border-t border-slate/10 text-slate">
+                  <tr key={event.id} className="border-t border-slate/10 text-slate hover:bg-secondary/5">
                     <td className="px-3 py-2">{new Date(event.captured_at).toLocaleString()}</td>
                     <td className="px-3 py-2">
                         <span className="inline-flex items-center gap-1">
@@ -289,7 +289,7 @@ export default function ExtensionMonitoringPage() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-3xl border border-slate/10 bg-white p-5 shadow-sm">
+        <div className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
           <h3 className="font-semibold text-ink">Top Sites (14d)</h3>
           <div className="mt-3 space-y-2">
             {topSites.length === 0 ? (
@@ -298,27 +298,27 @@ export default function ExtensionMonitoringPage() {
               topSites.map(([site, count]) => (
                 <div
                   key={site}
-                  className="flex items-center justify-between rounded-xl border border-slate/10 px-3 py-2 text-sm"
+                  className="flex items-center justify-between rounded-xl border border-secondary/10 px-3 py-2 text-sm"
                 >
                   <span className="text-slate">{site}</span>
-                  <span className="font-semibold text-ink">{count}</span>
+                  <span className="font-semibold text-secondary">{count}</span>
                 </div>
               ))
             )}
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate/10 bg-white p-5 shadow-sm">
+        <div className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
           <h3 className="font-semibold text-ink">Daily Event Volume (14d)</h3>
           <div className="mt-3 space-y-2">
             {summary?.daily?.length ? (
               summary.daily.slice(-7).map((item) => (
                 <div
                   key={item.day}
-                  className="flex items-center justify-between rounded-xl border border-slate/10 px-3 py-2 text-sm"
+                  className="flex items-center justify-between rounded-xl border border-secondary/10 px-3 py-2 text-sm"
                 >
                   <span className="text-slate">{item.day}</span>
-                  <span className="font-semibold text-ink">{item.count}</span>
+                  <span className="font-semibold text-secondary">{item.count}</span>
                 </div>
               ))
             ) : (
