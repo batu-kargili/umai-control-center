@@ -1,0 +1,22 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+.turbo/
+.vercel/
+
+# Secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# Coverage
+coverage/

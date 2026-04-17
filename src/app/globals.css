@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: 17 17 17;
+  --sand: 255 255 255;
+  --slate: 82 82 91;
+  --accent: 17 17 17;
+  --mint: 245 245 245;
+  --danger: 220 38 38;
+}
+
+body {
+  color: rgb(var(--ink));
+  background: #ffffff;
+}
+
+::selection {
+  background: rgba(17, 17, 17, 0.12);
+  color: #111111;
+}
+
+
+@layer utilities {
+  .fade-up {
+    animation: fade-up 0.6s ease forwards;
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  .fade-up.delay-1 {
+    animation-delay: 0.08s;
+  }
+  .fade-up.delay-2 {
+    animation-delay: 0.16s;
+  }
+  .fade-up.delay-3 {
+    animation-delay: 0.24s;
+  }
+  @keyframes fade-up {
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
