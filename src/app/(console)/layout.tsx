@@ -259,6 +259,12 @@ function Sidebar() {
   }
 
   const isProjectView = !!selectedProject;
+  const overviewHref =
+    selectedEnvironment && selectedProject
+      ? `/environments/${selectedEnvironment}/projects/${selectedProject}`
+      : selectedEnvironment
+        ? `/environments/${selectedEnvironment}`
+        : "/environments";
 
   return (
     <aside className="w-[240px] flex-col bg-white border-r border-secondary/10 h-full flex z-40 shrink-0">
@@ -275,8 +281,8 @@ function Sidebar() {
         {selectedEnvironment && (
           <div className="space-y-1">
             <Link
-              href={`/environments/${selectedEnvironment}`}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 ${pathname === `/environments/${selectedEnvironment}`
+              href={overviewHref}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 ${pathname === overviewHref
                 ? "border border-secondary/15 bg-secondary/8 text-secondary font-bold"
                 : "text-gray-600 hover:bg-secondary/5 hover:text-secondary font-medium"
                 }`}
@@ -288,7 +294,6 @@ function Sidebar() {
             {selectedProject && (
               <div className="mt-1 ml-4 pl-4 border-l border-secondary/10 flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-300">
                 {[
-                  { label: "Monitoring", href: "monitoring", icon: Activity },
                   { label: "Guardrails", href: "guardrails", icon: Shield },
                   { label: "Policies", href: "policies", icon: FileText },
                   { label: "Test", href: "test", icon: FlaskConical },

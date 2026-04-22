@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { fetchAlerts, fetchGuardrails, fetchPolicies, type AlertItem } from "src/lib/api";
+import { ProjectMonitoringSection } from "./project-monitoring-section";
 import {
   Shield,
   FileText,
@@ -28,6 +29,7 @@ export default function ProjectDetailPage() {
   const [policiesCount, setPoliciesCount] = useState(0);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -35,22 +37,49 @@ export default function ProjectDetailPage() {
     let active = true;
     const load = async () => {
       setLoading(true);
+      setError(null);
       try {
-        const [guardrails, policies, recentAlerts] = await Promise.all([
+        const [guardrailsResult, policiesResult, alertsResult] = await Promise.allSettled([
           fetchGuardrails(tenantId, envId, projectId),
           fetchPolicies(tenantId, envId, projectId),
           fetchAlerts(tenantId, envId, projectId, 25),
         ]);
         if (!active) return;
-        setGuardrailsCount(guardrails.length);
-        setPoliciesCount(policies.length);
-        setAlerts(recentAlerts);
+
+        if (guardrailsResult.status === "fulfilled") {
+          setGuardrailsCount(guardrailsResult.value.length);
+        } else {
+          console.error(guardrailsResult.reason);
+          setGuardrailsCount(0);
+        }
+
+        if (policiesResult.status === "fulfilled") {
+          setPoliciesCount(policiesResult.value.length);
+        } else {
+          console.error(policiesResult.reason);
+          setPoliciesCount(0);
+        }
+
+        if (alertsResult.status === "fulfilled") {
+          setAlerts(alertsResult.value);
+        } else {
+          console.error(alertsResult.reason);
+          setAlerts([]);
+        }
+
+        if (
+          guardrailsResult.status === "rejected" ||
+          policiesResult.status === "rejected" ||
+          alertsResult.status === "rejected"
+        ) {
+          setError("Some project data could not be loaded right now.");
+        }
       } finally {
         if (active) setLoading(false);
       }
     };
 
-    load();
+    void load();
     return () => {
       active = false;
     };
@@ -87,6 +116,7 @@ export default function ProjectDetailPage() {
             Managing guardrails, policies, and monitoring for {" "}
             <span className="font-bold text-secondary">{projectName}</span>.
           </p>
+          {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
         </div>
         <div className="flex gap-3">
           <Link
@@ -124,28 +154,7 @@ export default function ProjectDetailPage() {
         ))}
       </div>
 
-      <section className="rounded-3xl border border-secondary/10 bg-white p-8 shadow-sm space-y-4">
-        <h3 className="text-lg font-bold text-ink">Recent alerts</h3>
-        {loading ? (
-          <div className="text-sm text-slate">Loading alerts…</div>
-        ) : alerts.length === 0 ? (
-          <div className="text-sm text-slate">No alerts detected for this project.</div>
-        ) : (
-          <div className="space-y-3">
-            {alerts.slice(0, 5).map((alert) => (
-              <div key={alert.id} className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-ink">{alert.message}</p>
-                  <p className="text-[11px] text-slate">
-                    {alert.category} · {alert.severity} · {alert.phase}
-                  </p>
-                </div>
-                <span className="text-[10px] text-secondary/70">{new Date(alert.created_at).toLocaleString()}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+      <ProjectMonitoringSection tenantId={tenantId} envId={envId} projectId={projectId} variant="section" />
 
       <section className="rounded-3xl border border-secondary/10 bg-white p-10 shadow-sm">
         <div className="flex items-center justify-between mb-8">

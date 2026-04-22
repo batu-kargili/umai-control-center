@@ -103,6 +103,43 @@ verdict = umai.guardrails.wait_for(job["id"], timeout_ms=15000)
 return result if verdict["passed"] else safe_fallback`,
     note: "Capture the ADK plan trace and include it in metadata for richer policy context.",
   },
+  "microsoft-agt": {
+    tagline: "Internal action-governance support layer inside UMAI",
+    summary:
+      "Keep UMAI as the operator-facing surface and embed Microsoft AGT behind the engine for deterministic tool, MCP, and memory-write governance.",
+    steps: [
+      "Publish a signed UMAI snapshot that includes an optional agt block with enforced action phases.",
+      "Attach action metadata in input.artifacts so the engine can normalize tool, MCP, and memory operations into AGT context.",
+      "Run AGT before the normal policy pipeline for TOOL_INPUT, MCP_REQUEST, and MEMORY_WRITE.",
+      "Merge AGT blocks and step-up decisions into the existing UMAI decision contract and audit trail.",
+    ],
+    codeLabel: "Pseudocode (Python)",
+    code: `request = {
+  "phase": "TOOL_INPUT",
+  "input": {
+    "messages": [{"role": "user", "content": "Export the customer list."}],
+    "phase_focus": "LAST_USER_MESSAGE",
+    "content_type": "text",
+    "artifacts": [{
+      "artifact_type": "TOOL_INPUT",
+      "name": "crm.export",
+      "payload_summary": "Export customer list to CSV",
+      "metadata": {
+        "agent_id": "sales-agent",
+        "action": "export",
+        "tool_name": "crm.export",
+        "classification": "customer-data",
+        "side_effect": true
+      }
+    }]
+  }
+}
+
+decision = await umai.guardrails.test(request)
+if decision["decision"]["action"] == "STEP_UP_APPROVAL":
+    route_to_human_review()`,
+    note: "Start with the managed AGT baseline template, then add project-specific allowlist rules inside the signed snapshot instead of exposing a free-form editor.",
+  },
   xai: {
     tagline: "Async guardrails for Grok-style agent loops",
     summary:

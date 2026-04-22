@@ -18,6 +18,8 @@ import {
   fetchEvaluationRuns,
   fetchEvaluationSets,
   fetchGuardrails,
+  POLICY_PHASE_LABELS,
+  POLICY_PHASE_OPTIONS,
   type EvaluationRun,
   type EvaluationRunDetail,
   type EvaluationSet,
@@ -203,9 +205,16 @@ export default function EvaluationPage() {
                 onChange={(event) => setPhase(event.target.value as PolicyPhase)}
                 className="w-full rounded-xl border border-secondary/15 bg-slate-50 px-3 py-2 text-sm focus:border-secondary/40 focus:outline-none"
               >
-                <option value="PRE_LLM">PRE_LLM (user input)</option>
-                <option value="POST_LLM">POST_LLM (assistant output)</option>
+                {POLICY_PHASE_OPTIONS.map((phaseOption) => (
+                  <option key={phaseOption} value={phaseOption}>
+                    {POLICY_PHASE_LABELS[phaseOption]} ({phaseOption})
+                  </option>
+                ))}
               </select>
+              <p className="text-[11px] text-slate">
+                Action phases work best when uploaded JSONL cases include an `artifacts` array with
+                action metadata.
+              </p>
             </div>
           </div>
 

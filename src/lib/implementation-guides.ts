@@ -28,6 +28,13 @@ export const implementationGuides: ImplementationGuideSummary[] = [
     logo: "/assets/implementation/google-adk.svg",
   },
   {
+    slug: "microsoft-agt",
+    title: "Microsoft AGT",
+    description: "Use AGT as an internal support layer for action governance and OWASP controls.",
+    logo: "/assets/implementation/microsoft-agt.svg",
+    badge: "Governance",
+  },
+  {
     slug: "xai",
     title: "xAI",
     description: "Guard Grok-style agent flows with async policy evaluation.",

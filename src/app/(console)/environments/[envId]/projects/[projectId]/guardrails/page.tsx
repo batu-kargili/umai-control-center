@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import {
+  AgtConfig,
   createGuardrail,
   createGuardrailVersion,
   createPolicy,
@@ -19,10 +20,13 @@ import {
   GuardrailLibraryItem,
   GuardrailSnapshotResponse,
   GuardrailVersion,
+  POLICY_PHASE_LABELS,
+  POLICY_PHASE_OPTIONS,
   Policy,
   PolicyPhase,
 } from "src/lib/api";
 import { useConsole } from "src/app/(console)/console-context";
+import { useAuthSession } from "src/lib/auth-client";
 
 type PreflightTarget = "LAST_MESSAGE" | "FULL_HISTORY";
 
@@ -40,6 +44,8 @@ type WizardMode = "new" | "existing";
 type QuickStartId = "basic" | "production" | "data" | "custom";
 
 type CreateOption = "template" | "ai" | "custom";
+
+type DetailsTab = "overview" | "policies";
 
 type ToastTone = "success" | "error" | "info";
 
@@ -63,10 +69,7 @@ type LlmPreset = {
   };
 };
 
-const PHASE_LABELS: Record<PolicyPhase, string> = {
-  PRE_LLM: "Before AI",
-  POST_LLM: "After AI",
-};
+const PHASE_LABELS: Record<PolicyPhase, string> = POLICY_PHASE_LABELS;
 
 const PREFLIGHT_RULE_TEMPLATES: Array<{
   id: string;
@@ -134,13 +137,13 @@ const DEFAULT_PREFLIGHT = {
 };
 
 const DEFAULT_LLM_CONFIG = {
-  provider: "GROQ",
-  base_url: "https://api.groq.com/openai/v1",
+  provider: "OPENROUTER",
+  base_url: "https://openrouter.ai/api/v1",
   model: "openai/gpt-oss-safeguard-20b",
   timeout_ms: 2000,
   auth: {
     type: "bearer" as const,
-    secret_env: "GROQ_API_KEY",
+    secret_env: "OPENROUTER_API_KEY",
     header_name: "",
   },
 };
@@ -162,6 +165,18 @@ const TOAST_STYLES: Record<ToastTone, string> = {
 let nextToastId = 1;
 
 const LLM_PRESETS: LlmPreset[] = [
+  {
+    id: "OPENROUTER",
+    label: "OpenRouter (OpenAI-compatible)",
+    provider: "OPENROUTER",
+    base_url: "https://openrouter.ai/api/v1",
+    model: "openai/gpt-oss-safeguard-20b",
+    description: "OpenRouter hosted inference for GPT-OSS Safeguard.",
+    auth: {
+      type: "bearer",
+      secret_env: "OPENROUTER_API_KEY",
+    },
+  },
   {
     id: "GROQ",
     label: "Groq (OpenAI-compatible)",
@@ -311,6 +326,7 @@ const createPreflightRule = (): PreflightRule => ({
 export default function GuardrailsPage() {
   const { envId, projectId } = useParams() as { envId: string; projectId: string };
   const { tenantId } = useConsole();
+  const { user } = useAuthSession();
   const searchParams = useSearchParams();
   const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
   const [policies, setPolicies] = useState<Policy[]>([]);
@@ -342,6 +358,7 @@ export default function GuardrailsPage() {
   const [guardrailName, setGuardrailName] = useState("");
   const [guardrailMode, setGuardrailMode] = useState<Guardrail["mode"]>("ENFORCE");
   const [wizardGuardrailId, setWizardGuardrailId] = useState("");
+  const [existingVersionBase, setExistingVersionBase] = useState<number | null>(null);
   const [versionOverride, setVersionOverride] = useState("");
 
   const [selectedGuardrailId, setSelectedGuardrailId] = useState("");
@@ -379,14 +396,20 @@ export default function GuardrailsPage() {
   const [llmAdvanced, setLlmAdvanced] = useState(false);
   const [llmJsonText, setLlmJsonText] = useState("");
   const [llmJsonTouched, setLlmJsonTouched] = useState(false);
+  const [guardrailAgt, setGuardrailAgt] = useState<AgtConfig | null>(null);
+  const [loadingExistingConfig, setLoadingExistingConfig] = useState(false);
 
   const [publishNow, setPublishNow] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [publishingDetailsVersion, setPublishingDetailsVersion] = useState(false);
 
   const [detailsVersion, setDetailsVersion] = useState<number | null>(null);
   const [snapshot, setSnapshot] = useState<GuardrailSnapshotResponse | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [detailsTab, setDetailsTab] = useState<DetailsTab>("overview");
+  const [detailsPolicyIndex, setDetailsPolicyIndex] = useState(0);
+  const [detailsPolicyPhase, setDetailsPolicyPhase] = useState<PolicyPhase | "ALL">("ALL");
   const [toastItems, setToastItems] = useState<ToastItem[]>([]);
   const toastTimeouts = useRef<Record<number, number>>({});
 
@@ -394,6 +417,29 @@ export default function GuardrailsPage() {
     () => guardrails.find((item) => item.guardrail_id === selectedGuardrailId) || null,
     [guardrails, selectedGuardrailId]
   );
+
+  const availableDetailsPolicyPhases = useMemo(() => {
+    const phaseSet = new Set<PolicyPhase>();
+    (snapshot?.snapshot.policies ?? []).forEach((policy) => {
+      policy.phases.forEach((phase) => phaseSet.add(phase));
+    });
+    return POLICY_PHASE_OPTIONS.filter((phase) => phaseSet.has(phase));
+  }, [snapshot]);
+
+  const filteredDetailsPolicies = useMemo(() => {
+    const source = snapshot?.snapshot.policies ?? [];
+    if (detailsPolicyPhase === "ALL") {
+      return source;
+    }
+    return source.filter((policy) => policy.phases.includes(detailsPolicyPhase));
+  }, [detailsPolicyPhase, snapshot]);
+
+  const safeDetailsPolicyIndex =
+    filteredDetailsPolicies.length === 0
+      ? 0
+      : Math.min(detailsPolicyIndex, filteredDetailsPolicies.length - 1);
+  const activeDetailsPolicy = filteredDetailsPolicies[safeDetailsPolicyIndex] ?? null;
+  const detailsPolicyTabOffset = Math.max(0, safeDetailsPolicyIndex - 1) * 224;
 
   const selectedTemplate = useMemo(
     () => guardrailLibrary.find((item) => item.template_id === selectedTemplateId) || null,
@@ -565,6 +611,25 @@ export default function GuardrailsPage() {
   }, [detailsOpen, envId, projectId, selectedGuardrailId, detailsVersion, tenantId]);
 
   useEffect(() => {
+    if (detailsPolicyPhase !== "ALL" && !availableDetailsPolicyPhases.includes(detailsPolicyPhase)) {
+      setDetailsPolicyPhase("ALL");
+    }
+  }, [availableDetailsPolicyPhases, detailsPolicyPhase]);
+
+  useEffect(() => {
+    setDetailsPolicyIndex((current) => {
+      if (filteredDetailsPolicies.length === 0) {
+        return 0;
+      }
+      return Math.min(current, filteredDetailsPolicies.length - 1);
+    });
+  }, [filteredDetailsPolicies.length]);
+
+  useEffect(() => {
+    setDetailsPolicyIndex(0);
+  }, [detailsVersion, selectedGuardrailId, detailsPolicyPhase]);
+
+  useEffect(() => {
     if (wizardMode === "new") {
       setPublishNow(true);
     }
@@ -707,8 +772,8 @@ export default function GuardrailsPage() {
     if (wizardMode === "new") {
       return selectedTemplate?.version ?? 1;
     }
-    return selectedWizardGuardrail ? selectedWizardGuardrail.current_version + 1 : 1;
-  }, [wizardMode, selectedWizardGuardrail, selectedTemplate?.version]);
+    return existingVersionBase ?? (selectedWizardGuardrail ? selectedWizardGuardrail.current_version + 1 : 1);
+  }, [wizardMode, existingVersionBase, selectedWizardGuardrail, selectedTemplate?.version]);
 
   const resolvedVersion = useMemo(() => {
     const parsed = Number(versionOverride);
@@ -719,17 +784,31 @@ export default function GuardrailsPage() {
   }, [versionOverride, nextVersion]);
 
   const phaseSummary = useMemo(() => {
-    const summary: Record<PolicyPhase, number> = {
-      PRE_LLM: 0,
-      POST_LLM: 0,
-    };
+    const summary = Object.fromEntries(
+      POLICY_PHASE_OPTIONS.map((phase) => [phase, 0])
+    ) as Record<PolicyPhase, number>;
     selectedPolicies.forEach((policy) => {
       policy.phases.forEach((phase) => {
         summary[phase] = (summary[phase] ?? 0) + 1;
       });
     });
+    if (createOption === "template" && selectedTemplate?.agt?.enabled) {
+      selectedTemplate.agt.enforced_phases.forEach((phase) => {
+        summary[phase] = (summary[phase] ?? 0) + 1;
+      });
+    }
     return summary;
-  }, [selectedPolicies]);
+  }, [createOption, selectedPolicies, selectedTemplate]);
+
+  const phaseSummaryText = useMemo(() => {
+    const active = POLICY_PHASE_OPTIONS.filter((phase) => (phaseSummary[phase] ?? 0) > 0);
+    if (active.length === 0) {
+      return "No phases selected yet.";
+    }
+    return active
+      .map((phase) => `${PHASE_LABELS[phase]}: ${phaseSummary[phase] ?? 0}`)
+      .join(" | ");
+  }, [phaseSummary]);
 
   const guardrailIdTrimmed = guardrailId.trim();
   const guardrailNameTrimmed = guardrailName.trim();
@@ -809,13 +888,7 @@ export default function GuardrailsPage() {
           ? draft.guardrail.phases
           : defaultPhases,
       preflight: draft.guardrail.preflight || DEFAULT_PREFLIGHT,
-      llm_config:
-        draft.guardrail.llm_config || {
-          provider: "OPENAI",
-          base_url: "https://api.openai.com/v1",
-          model: "gpt-4o-mini",
-          timeout_ms: 2000,
-        },
+      llm_config: draft.guardrail.llm_config || DEFAULT_LLM_CONFIG,
     };
 
     return {
@@ -833,6 +906,9 @@ export default function GuardrailsPage() {
     setSelectedGuardrailId(guardrailId);
     const guardrail = guardrails.find((item) => item.guardrail_id === guardrailId);
     setDetailsVersion(guardrail?.current_version ?? null);
+    setDetailsTab("overview");
+    setDetailsPolicyPhase("ALL");
+    setDetailsPolicyIndex(0);
     setDetailsOpen(true);
   };
 
@@ -842,34 +918,87 @@ export default function GuardrailsPage() {
     setSnapshotError(null);
     setGuardrailVersions([]);
     setDetailsVersion(null);
+    setDetailsTab("overview");
+    setDetailsPolicyPhase("ALL");
+    setDetailsPolicyIndex(0);
+  };
+
+  const handlePublishSelectedVersion = async () => {
+    if (!tenantId || !selectedGuardrailId || !detailsVersion) {
+      pushToast("error", "Select a guardrail version before publishing.");
+      return;
+    }
+    setPublishingDetailsVersion(true);
+    try {
+      const actorId = user?.username || user?.email || user?.sub || undefined;
+      await publishGuardrailVersion(selectedGuardrailId, detailsVersion, {
+        tenant_id: tenantId,
+        environment_id: envId,
+        project_id: projectId,
+        publisher_id: actorId,
+        approver_id: actorId,
+      });
+      const [updatedGuardrails, versions, snapshotResponse] = await Promise.all([
+        fetchGuardrails(tenantId, envId, projectId),
+        fetchGuardrailVersions(tenantId, envId, projectId, selectedGuardrailId),
+        fetchGuardrailSnapshot(
+          tenantId,
+          envId,
+          projectId,
+          selectedGuardrailId,
+          detailsVersion
+        ),
+      ]);
+      setGuardrails(updatedGuardrails);
+      setGuardrailVersions([...versions].sort((a, b) => b.version - a.version));
+      setSnapshot(snapshotResponse);
+      pushToast("success", `Guardrail version v${detailsVersion} published.`);
+    } catch (err) {
+      console.error(err);
+      pushToast(
+        "error",
+        err instanceof Error ? err.message : "Publishing failed. Try again."
+      );
+    } finally {
+      setPublishingDetailsVersion(false);
+    }
   };
 
   const openCreateScreen = () => {
     setScreen("create");
     setCreateOption(null);
     setWizardError(null);
+    setLoadingExistingConfig(false);
+    setExistingVersionBase(null);
   };
 
   const closeCreateScreen = () => {
     setScreen("list");
     setCreateOption(null);
     setWizardError(null);
+    setLoadingExistingConfig(false);
+    setExistingVersionBase(null);
   };
 
   const selectCreateOption = (option: CreateOption) => {
     setScreen("create");
     setCreateOption(option);
     setWizardError(null);
+    setLoadingExistingConfig(false);
 
     if (option === "template") {
       setWizardMode("new");
       setWizardStep(0);
+      setGuardrailAgt(null);
+      setExistingVersionBase(null);
     }
 
     if (option === "custom") {
       setSelectedTemplateId(null);
       setWizardMode("new");
       setWizardStep(1);
+      setGuardrailAgt(null);
+      setExistingVersionBase(null);
     }
   };
 
@@ -1013,6 +1142,7 @@ export default function GuardrailsPage() {
         preflight: agenticDraft.guardrail.preflight,
         llm_config: agenticDraft.guardrail.llm_config,
         phases: agenticDraft.guardrail.phases,
+        agt: agenticDraft.guardrail.agt ?? undefined,
       });
 
       const updatedGuardrails = await fetchGuardrails(tenantId, envId, projectId);
@@ -1114,8 +1244,115 @@ export default function GuardrailsPage() {
     setLlmAuthHeaderName(
       (auth.header_name as string | undefined) ?? DEFAULT_LLM_CONFIG.auth.header_name ?? ""
     );
+    setGuardrailAgt(template.agt ?? null);
+    setExistingVersionBase(null);
+    setPublishNow(true);
+    setVersionOverride("");
     setWizardStep(1);
     pushToast("info", "Template settings applied. Review and edit as needed.");
+  };
+
+  const applySnapshotSettings = (snapshotResponse: GuardrailSnapshotResponse) => {
+    const snapshotPayload = snapshotResponse.snapshot;
+    const preflight = snapshotPayload.preflight as Record<string, unknown>;
+    const snapshotRules = Array.isArray(preflight?.rules)
+      ? (preflight.rules as PreflightRule[])
+      : [];
+    const llmConfig = snapshotPayload.llm_config as Record<string, unknown>;
+    const auth = (llmConfig?.auth as Record<string, unknown> | undefined) || {};
+
+    setSelectedTemplateId(null);
+    setSelectedPolicyIds(
+      mergeRequiredPolicies(snapshotPayload.policies.map((policy) => policy.id))
+    );
+    setPreflightTarget(
+      (preflight?.target as PreflightTarget) || DEFAULT_PREFLIGHT.target
+    );
+    setPreflightRules(snapshotRules.map((rule) => ({ ...rule })));
+    setPreflightMaxLength(
+      typeof preflight?.max_length === "number"
+        ? preflight.max_length.toString()
+        : ""
+    );
+    setLlmProvider((llmConfig?.provider as string) || DEFAULT_LLM_CONFIG.provider);
+    setLlmBaseUrl((llmConfig?.base_url as string) || DEFAULT_LLM_CONFIG.base_url);
+    setLlmModel((llmConfig?.model as string) || DEFAULT_LLM_CONFIG.model);
+    setLlmTimeout(
+      typeof llmConfig?.timeout_ms === "number"
+        ? llmConfig.timeout_ms.toString()
+        : DEFAULT_LLM_CONFIG.timeout_ms.toString()
+    );
+    setLlmAuthType(
+      ((auth.type as "none" | "bearer" | "header" | undefined) ??
+        DEFAULT_LLM_CONFIG.auth.type)
+    );
+    setLlmAuthSecretEnv(
+      (auth.secret_env as string | undefined) ?? DEFAULT_LLM_CONFIG.auth.secret_env ?? ""
+    );
+    setLlmAuthHeaderName(
+      (auth.header_name as string | undefined) ?? DEFAULT_LLM_CONFIG.auth.header_name ?? ""
+    );
+    setGuardrailAgt(snapshotPayload.agt ?? null);
+    setPublishNow(false);
+    setVersionOverride("");
+    setPreflightAdvanced(false);
+    setPreflightJsonTouched(false);
+    setLlmAdvanced(false);
+    setLlmJsonTouched(false);
+  };
+
+  const loadExistingGuardrailConfig = async (guardrailId: string) => {
+    if (!tenantId) {
+      pushToast("error", "Tenant not configured.");
+      return;
+    }
+    const guardrail = guardrails.find((item) => item.guardrail_id === guardrailId);
+    if (!guardrail) {
+      pushToast("error", "Guardrail could not be found.");
+      return;
+    }
+
+    setLoadingExistingConfig(true);
+    setExistingVersionBase(null);
+    try {
+      const [snapshotResponse, versions] = await Promise.all([
+        fetchGuardrailSnapshot(
+          tenantId,
+          envId,
+          projectId,
+          guardrailId,
+          guardrail.current_version
+        ),
+        fetchGuardrailVersions(tenantId, envId, projectId, guardrailId),
+      ]);
+      const highestVersion = versions.reduce(
+        (maxVersion, item) => Math.max(maxVersion, item.version),
+        guardrail.current_version
+      );
+      setWizardMode("existing");
+      setWizardGuardrailId(guardrailId);
+      setExistingVersionBase(highestVersion + 1);
+      setVersionOverride("");
+      applySnapshotSettings(snapshotResponse);
+    } catch (err) {
+      console.error(err);
+      pushToast(
+        "error",
+        err instanceof Error
+          ? err.message
+          : "Unable to load the current guardrail version."
+      );
+    } finally {
+      setLoadingExistingConfig(false);
+    }
+  };
+
+  const startExistingGuardrailVersion = async (guardrailId: string) => {
+    setScreen("create");
+    setCreateOption("custom");
+    setWizardStep(1);
+    setWizardError(null);
+    await loadExistingGuardrailConfig(guardrailId);
   };
 
   const applyLlmPreset = (presetId: string) => {
@@ -1401,15 +1638,19 @@ export default function GuardrailsPage() {
         policy_ids: selectedPolicyIds,
         preflight: preflightResult.payload,
         llm_config: llmResult.payload,
+        agt: guardrailAgt ?? undefined,
       });
 
       let publishBlockedMessage: string | null = null;
       if (publishNow) {
         try {
+          const actorId = user?.username || user?.email || user?.sub || undefined;
           await publishGuardrailVersion(guardrailIdValue, resolvedVersion, {
             tenant_id: tenantId,
             environment_id: envId,
             project_id: projectId,
+            publisher_id: actorId,
+            approver_id: actorId,
           });
         } catch (publishErr) {
           console.error(publishErr);
@@ -1825,36 +2066,53 @@ export default function GuardrailsPage() {
               </div>
             ) : (
               guardrails.map((guardrail) => (
-                <button
-                  type="button"
+                <div
                   key={guardrail.guardrail_id}
-                  onClick={() => openDetails(guardrail.guardrail_id)}
-                  className={`w-full rounded-2xl border px-5 py-4 text-left shadow-sm transition ${
+                  className={`w-full rounded-2xl border px-5 py-4 shadow-sm transition ${
                     guardrail.guardrail_id === selectedGuardrailId
                       ? "border-accent/40 bg-accent/5"
                       : "border-slate/10 bg-white"
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-semibold text-ink">{guardrail.name}</p>
-                      <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-slate/50">
-                        {guardrail.guardrail_id}
-                      </p>
+                  <button
+                    type="button"
+                    onClick={() => openDetails(guardrail.guardrail_id)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-semibold text-ink">{guardrail.name}</p>
+                        <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-slate/50">
+                          {guardrail.guardrail_id}
+                        </p>
+                      </div>
+                      <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
+                        {guardrail.mode}
+                      </span>
                     </div>
-                    <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
-                      {guardrail.mode}
-                    </span>
-                  </div>
-                  <div className="mt-4 flex items-center justify-between">
+                  </button>
+                  <div className="mt-4 flex items-center justify-between gap-3">
                     <span className="text-xs text-slate">
                       Current version: {guardrail.current_version}
                     </span>
-                    <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-accent">
-                      View details
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="rounded-xl border border-slate/10 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate hover:bg-slate/5"
+                        onClick={() => void startExistingGuardrailVersion(guardrail.guardrail_id)}
+                      >
+                        Create version
+                      </button>
+                      <button
+                        type="button"
+                        className="text-[10px] font-bold uppercase tracking-[0.3em] text-accent"
+                        onClick={() => openDetails(guardrail.guardrail_id)}
+                      >
+                        View details
+                      </button>
+                    </div>
                   </div>
-                </button>
+                </div>
               ))
             )}
           </div>
@@ -1963,7 +2221,7 @@ export default function GuardrailsPage() {
                         <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-semibold text-slate/70">
                           {template.phases.map((phase) => (
                             <span key={phase} className="rounded-full bg-slate/10 px-2 py-1">
-                              {phase}
+                              {PHASE_LABELS[phase]}
                             </span>
                           ))}
                           {template.managed && (
@@ -2004,7 +2262,13 @@ export default function GuardrailsPage() {
                     <input
                       type="radio"
                       checked={wizardMode === "new"}
-                      onChange={() => setWizardMode("new")}
+                      onChange={() => {
+                        setWizardMode("new");
+                        setGuardrailAgt(null);
+                        setLoadingExistingConfig(false);
+                        setExistingVersionBase(null);
+                        setVersionOverride("");
+                      }}
                     />
                     Create new guardrail
                   </label>
@@ -2012,7 +2276,16 @@ export default function GuardrailsPage() {
                     <input
                       type="radio"
                       checked={wizardMode === "existing"}
-                      onChange={() => setWizardMode("existing")}
+                      onChange={() => {
+                        const nextGuardrailId =
+                          wizardGuardrailId || selectedGuardrailId || guardrails[0]?.guardrail_id || "";
+                        if (nextGuardrailId) {
+                          void loadExistingGuardrailConfig(nextGuardrailId);
+                        } else {
+                          setWizardMode("existing");
+                          setExistingVersionBase(null);
+                        }
+                      }}
                     />
                     Update existing guardrail
                   </label>
@@ -2026,7 +2299,7 @@ export default function GuardrailsPage() {
                     <select
                       className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
                       value={wizardGuardrailId}
-                      onChange={(event) => setWizardGuardrailId(event.target.value)}
+                      onChange={(event) => void loadExistingGuardrailConfig(event.target.value)}
                     >
                       <option value="">Select guardrail</option>
                       {guardrails.map((guardrail) => (
@@ -2038,6 +2311,11 @@ export default function GuardrailsPage() {
                     <p className="text-[11px] text-slate/60">
                       A new version will be created for the selected guardrail.
                     </p>
+                    {loadingExistingConfig && (
+                      <p className="text-[11px] text-accent">
+                        Loading current guardrail settings...
+                      </p>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-4">
@@ -2624,7 +2902,7 @@ export default function GuardrailsPage() {
                       {selectedPolicyIds.length} selected
                     </p>
                     <p className="mt-1 text-xs text-slate">
-                      Before AI: {phaseSummary.PRE_LLM || 0} | After AI: {phaseSummary.POST_LLM || 0}
+                      {phaseSummaryText}
                     </p>
                     {missingPolicyIds.length > 0 && (
                       <p className="mt-2 text-xs text-accent">
@@ -2644,6 +2922,9 @@ export default function GuardrailsPage() {
                     This guardrail first applies fast request filters to the{" "}
                     {preflightTarget === "LAST_MESSAGE" ? "last user message" : "full history"} and
                     then runs {selectedPolicyIds.length} attached policies.
+                    {createOption === "template" && selectedTemplate?.agt?.enabled
+                      ? " It also enables AGT action governance for the managed action phases."
+                      : ""}
                   </p>
                 </div>
 
@@ -2707,6 +2988,12 @@ export default function GuardrailsPage() {
                 {wizardMode === "new" && (
                   <p className="text-[11px] text-slate/60">
                     First versions auto-publish when created.
+                  </p>
+                )}
+                {wizardMode === "existing" && (
+                  <p className="text-[11px] text-slate/60">
+                    Existing guardrails now load from the current snapshot. If you publish here,
+                    the new version is approved with your current operator identity.
                   </p>
                 )}
               </div>
@@ -2788,183 +3075,555 @@ export default function GuardrailsPage() {
 
       {detailsOpen && selectedGuardrail ? (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center bg-ink/40 px-4 py-10"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(247,244,239,0.78)] px-4 py-6 backdrop-blur-sm"
           onClick={closeDetails}
         >
           <div
-            className="max-h-[calc(100vh-80px)] w-full max-w-4xl overflow-y-auto rounded-3xl bg-white p-8 shadow-xl"
+            className="flex h-[min(88vh,860px)] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] border border-slate/10 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.10)]"
             onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-label="Guardrail details"
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">Guardrail Details</p>
-                <h3 className="mt-2 font-display text-2xl font-bold text-ink">{selectedGuardrail.name}</h3>
-                <p className="mt-1 text-xs text-slate">{selectedGuardrail.guardrail_id}</p>
+            <div className="border-b border-slate/10 px-8 pb-5 pt-7">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    Guardrail Details
+                  </p>
+                  <h3 className="mt-2 font-display text-2xl font-bold text-ink">
+                    {selectedGuardrail.name}
+                  </h3>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate">
+                    <span>{selectedGuardrail.guardrail_id}</span>
+                    <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate">
+                      {selectedGuardrail.mode}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <button
-                type="button"
-                className="rounded-full border border-slate/10 px-3 py-1 text-xs font-semibold text-slate hover:bg-slate/5"
-                onClick={closeDetails}
-              >
-                Close
-              </button>
+
+              <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
+                <div className="inline-flex rounded-full border border-slate/10 bg-slate/5 p-1">
+                  <button
+                    type="button"
+                    className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                      detailsTab === "overview"
+                        ? "bg-white text-ink shadow-sm"
+                        : "text-slate hover:text-ink"
+                    }`}
+                    onClick={() => setDetailsTab("overview")}
+                  >
+                    Overview
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                      detailsTab === "policies"
+                        ? "bg-white text-ink shadow-sm"
+                        : "text-slate hover:text-ink"
+                    }`}
+                    onClick={() => setDetailsTab("policies")}
+                  >
+                    Policies
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  {detailsTab === "policies" && filteredDetailsPolicies.length > 0 ? (
+                    <div className="flex items-center gap-2 text-xs text-slate">
+                      <span>
+                        {safeDetailsPolicyIndex + 1} of {filteredDetailsPolicies.length}
+                      </span>
+                      <button
+                        type="button"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate/10 text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                        onClick={() =>
+                          setDetailsPolicyIndex((current) =>
+                            filteredDetailsPolicies.length === 0
+                              ? 0
+                              : current === 0
+                                ? filteredDetailsPolicies.length - 1
+                                : current - 1
+                          )
+                        }
+                        disabled={filteredDetailsPolicies.length <= 1}
+                        aria-label="Previous policy"
+                      >
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="M11.75 4.5 6.25 10l5.5 5.5"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate/10 text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                        onClick={() =>
+                          setDetailsPolicyIndex((current) =>
+                            filteredDetailsPolicies.length === 0
+                              ? 0
+                              : current >= filteredDetailsPolicies.length - 1
+                                ? 0
+                                : current + 1
+                          )
+                        }
+                        disabled={filteredDetailsPolicies.length <= 1}
+                        aria-label="Next policy"
+                      >
+                        <svg
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          className="h-4 w-4"
+                          aria-hidden="true"
+                        >
+                          <path
+                            d="m8.25 4.5 5.5 5.5-5.5 5.5"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <button
+                    type="button"
+                    className="rounded-full border border-slate/10 bg-white px-4 py-2 text-xs font-semibold text-ink shadow-sm transition hover:bg-slate/5"
+                    onClick={closeDetails}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="mt-6 space-y-6">
-              <div className="rounded-2xl border border-slate/10 bg-slate/5 px-5 py-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-ink">{selectedGuardrail.name}</p>
-                    <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-slate/50">
-                      {selectedGuardrail.guardrail_id}
-                    </p>
-                  </div>
-                  <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
-                    {selectedGuardrail.mode}
-                  </span>
-                </div>
-                <div className="mt-4 grid gap-4 text-xs text-slate sm:grid-cols-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
-                      Current Version
-                    </p>
-                    <p className="mt-2 text-sm font-semibold text-ink">
-                      v{selectedGuardrail.current_version}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
-                      Snapshot Version
-                    </p>
-                    <select
-                      className="mt-2 w-full rounded-xl border border-slate/10 bg-white px-2 py-1 text-xs"
-                      value={detailsVersion ?? ""}
-                      onChange={(event) =>
-                        setDetailsVersion(
-                          event.target.value ? Number(event.target.value) : null
-                        )
-                      }
-                      disabled={guardrailVersions.length === 0}
-                    >
-                      <option value="">Select version</option>
-                      {guardrailVersions.map((item) => (
-                        <option key={item.version} value={item.version}>
-                          v{item.version}
-                          {item.version === selectedGuardrail.current_version ? " (current)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
-                      Redis Snapshot
-                    </p>
-                    <p className="mt-2 text-sm font-semibold text-ink">
-                      {snapshotLoading
-                        ? "Loading..."
-                        : snapshot
-                          ? snapshot.redis_available
-                            ? snapshot.redis_present
-                              ? "Published"
-                              : "Not published"
-                            : "Unavailable"
-                          : "Unknown"}
-                    </p>
-                  </div>
-                </div>
-                {snapshot?.redis_key && (
-                  <p className="mt-3 break-all text-[10px] text-slate/60">
-                    Redis key: {snapshot.redis_key}
-                  </p>
-                )}
-              </div>
-
+            <div className="min-h-0 flex-1 overflow-hidden px-8 pb-8 pt-6">
               {snapshotError && (
-                <div className="rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
+                <div className="mb-4 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
                   {snapshotError}
                 </div>
               )}
 
               {snapshotLoading ? (
-                <div className="py-10 text-center text-sm text-slate/50">
+                <div className="flex h-full items-center justify-center text-sm text-slate/50">
                   Loading snapshot details...
                 </div>
               ) : snapshot ? (
-                <div className="space-y-6">
-                  {snapshot.snapshot.phases?.length ? (
-                    <div className="flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
-                      {snapshot.snapshot.phases.map((phase) => (
-                        <span
-                          key={phase}
-                          className="rounded-full bg-slate/10 px-2 py-1 uppercase tracking-[0.2em]"
-                        >
-                          {phase}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
-                  <div className="rounded-2xl border border-slate/10 bg-slate/5 p-4">
-                    <p className="text-xs font-semibold text-ink">Preflight</p>
-                    <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-white px-4 py-3 text-[11px] text-slate">
-                      {formatJson(snapshot.snapshot.preflight)}
-                    </pre>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate/10 bg-slate/5 p-4">
-                    <p className="text-xs font-semibold text-ink">LLM Config</p>
-                    <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-white px-4 py-3 text-[11px] text-slate">
-                      {formatJson(snapshot.snapshot.llm_config)}
-                    </pre>
-                  </div>
-
-                  <div className="space-y-3">
-                    <p className="text-xs font-semibold text-ink">Attached Policies</p>
-                    {snapshot.snapshot.policies.length === 0 ? (
-                      <div className="rounded-2xl border border-slate/10 bg-white px-4 py-6 text-center text-xs text-slate/60">
-                        No policies are attached to this version.
-                      </div>
-                    ) : (
-                      snapshot.snapshot.policies.map((policy) => (
-                        <div
-                          key={policy.id}
-                          className="rounded-2xl border border-slate/10 bg-white p-4"
-                        >
-                          <div className="flex items-start justify-between gap-4">
-                            <div>
-                              <p className="text-sm font-semibold text-ink">{policy.name}</p>
-                              <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-slate/50">
-                                {policy.id}
-                              </p>
-                              <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate">
-                                <span className="rounded-full bg-slate/10 px-2 py-1">{policy.type}</span>
-                                <span className="rounded-full bg-slate/10 px-2 py-1">
-                                  {policy.enabled ? "Enabled" : "Disabled"}
-                                </span>
-                                {policy.phases.map((phase) => (
-                                  <span
-                                    key={`${policy.id}-${phase}`}
-                                    className="rounded-full bg-slate/10 px-2 py-1"
-                                  >
-                                    {phase}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
+                detailsTab === "overview" ? (
+                  <div className="grid h-full gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+                    <div className="min-h-0 space-y-6 overflow-y-auto pr-1">
+                      <div className="rounded-[28px] border border-slate/10 bg-[linear-gradient(135deg,_#ffffff_0%,_#f9f7f1_100%)] p-5">
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                              Current Version
+                            </p>
+                            <p className="mt-2 text-lg font-semibold text-ink">
+                              v{selectedGuardrail.current_version}
+                            </p>
                           </div>
-                          <pre className="mt-3 whitespace-pre-wrap rounded-xl bg-slate/5 px-4 py-3 text-[11px] text-slate">
-                            {formatJson(policy.config)}
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                              Snapshot Version
+                            </p>
+                            <select
+                              className="mt-2 w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm text-ink"
+                              value={detailsVersion ?? ""}
+                              onChange={(event) =>
+                                setDetailsVersion(
+                                  event.target.value ? Number(event.target.value) : null
+                                )
+                              }
+                              disabled={guardrailVersions.length === 0}
+                            >
+                              <option value="">Select version</option>
+                              {guardrailVersions.map((item) => (
+                                <option key={item.version} value={item.version}>
+                                  v{item.version}
+                                  {item.version === selectedGuardrail.current_version
+                                    ? " (current)"
+                                    : ""}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                              Redis Snapshot
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-ink">
+                              {snapshot.redis_available
+                                ? snapshot.redis_present
+                                  ? "Published"
+                                  : "Not published"
+                                : "Unavailable"}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                              Attached Policies
+                            </p>
+                            <p className="mt-2 text-sm font-semibold text-ink">
+                              {snapshot.snapshot.policies.length}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-5 flex flex-wrap items-center gap-3">
+                          {detailsVersion &&
+                          (detailsVersion !== selectedGuardrail.current_version ||
+                            !snapshot.redis_present) ? (
+                            <button
+                              type="button"
+                              className="rounded-xl bg-ink px-4 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-ink/90 disabled:opacity-60"
+                              onClick={handlePublishSelectedVersion}
+                              disabled={snapshotLoading || publishingDetailsVersion}
+                            >
+                              {publishingDetailsVersion
+                                ? "Publishing..."
+                                : detailsVersion === selectedGuardrail.current_version
+                                  ? `Publish v${detailsVersion}`
+                                  : `Promote v${detailsVersion} to current`}
+                            </button>
+                          ) : null}
+                          {detailsVersion === selectedGuardrail.current_version &&
+                          snapshot.redis_present ? (
+                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-700">
+                              Live version
+                            </span>
+                          ) : null}
+                          {snapshot.redis_key ? (
+                            <span className="text-[11px] text-slate/60">
+                              Redis key: {snapshot.redis_key}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+
+                      <div className="grid gap-4 lg:grid-cols-2">
+                        <div className="rounded-3xl border border-slate/10 bg-slate/5 p-5">
+                          <p className="text-xs font-semibold text-ink">Preflight</p>
+                          <pre className="mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[11px] text-slate">
+                            {formatJson(snapshot.snapshot.preflight)}
                           </pre>
                         </div>
-                      ))
+
+                        <div className="rounded-3xl border border-slate/10 bg-slate/5 p-5">
+                          <p className="text-xs font-semibold text-ink">LLM Config</p>
+                          <pre className="mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[11px] text-slate">
+                            {formatJson(snapshot.snapshot.llm_config)}
+                          </pre>
+                        </div>
+
+                        {snapshot.snapshot.agt ? (
+                          <div className="rounded-3xl border border-slate/10 bg-slate/5 p-5 lg:col-span-2">
+                            <p className="text-xs font-semibold text-ink">AGT Action Governance</p>
+                            <pre className="mt-3 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[11px] text-slate">
+                              {formatJson(snapshot.snapshot.agt)}
+                            </pre>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <aside className="min-h-0 rounded-[28px] border border-slate/10 bg-slate/5 p-5">
+                      <div className="flex h-full flex-col">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                            Snapshot Overview
+                          </p>
+                          <p className="mt-2 text-lg font-semibold text-ink">
+                            v{snapshot.version} configuration
+                          </p>
+                          <p className="mt-1 text-sm text-slate">
+                            Review phases and jump straight into the policy viewer when needed.
+                          </p>
+                        </div>
+
+                        <div className="mt-5">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                            Active Phases
+                          </p>
+                          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
+                            {snapshot.snapshot.phases?.length ? (
+                              snapshot.snapshot.phases.map((phase) => (
+                                <span
+                                  key={phase}
+                                  className="rounded-full bg-white px-3 py-1 uppercase tracking-[0.2em]"
+                                >
+                                  {PHASE_LABELS[phase]}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-slate/60">No phases configured.</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-5 min-h-0 flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                              Policies In This Version
+                            </p>
+                            <button
+                              type="button"
+                              className="text-[11px] font-semibold text-accent transition hover:text-ink"
+                              onClick={() => setDetailsTab("policies")}
+                            >
+                              Open policy view
+                            </button>
+                          </div>
+                          <div className="mt-3 space-y-2 overflow-y-auto pr-1">
+                            {snapshot.snapshot.policies.length === 0 ? (
+                              <div className="rounded-2xl border border-dashed border-slate/15 bg-white px-4 py-6 text-center text-xs text-slate/60">
+                                No policies are attached to this version.
+                              </div>
+                            ) : (
+                              snapshot.snapshot.policies.map((policy, index) => (
+                                <button
+                                  key={policy.id}
+                                  type="button"
+                                  className="w-full rounded-2xl border border-transparent bg-white px-4 py-3 text-left transition hover:border-slate/10 hover:bg-slate/5"
+                                  onClick={() => {
+                                    setDetailsPolicyPhase("ALL");
+                                    setDetailsPolicyIndex(index);
+                                    setDetailsTab("policies");
+                                  }}
+                                >
+                                  <div className="flex items-start justify-between gap-3">
+                                    <div className="min-w-0">
+                                      <p className="truncate text-sm font-semibold text-ink">
+                                        {policy.name}
+                                      </p>
+                                      <p className="mt-1 truncate text-[10px] uppercase tracking-[0.25em] text-slate/50">
+                                        {policy.id}
+                                      </p>
+                                    </div>
+                                    <span className="rounded-full bg-slate/10 px-2 py-1 text-[10px] font-bold text-slate">
+                                      {policy.type}
+                                    </span>
+                                  </div>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </aside>
+                  </div>
+                ) : (
+                  <div className="flex h-full flex-col gap-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className={`rounded-full px-3 py-2 text-[11px] font-semibold transition ${
+                          detailsPolicyPhase === "ALL"
+                            ? "bg-ink text-white"
+                            : "border border-slate/10 bg-white text-slate hover:bg-slate/5"
+                        }`}
+                        onClick={() => setDetailsPolicyPhase("ALL")}
+                      >
+                        All policies
+                      </button>
+                      {availableDetailsPolicyPhases.map((phase) => (
+                        <button
+                          key={phase}
+                          type="button"
+                          className={`rounded-full px-3 py-2 text-[11px] font-semibold transition ${
+                            detailsPolicyPhase === phase
+                              ? "bg-ink text-white"
+                              : "border border-slate/10 bg-white text-slate hover:bg-slate/5"
+                          }`}
+                          onClick={() => setDetailsPolicyPhase(phase)}
+                        >
+                          {PHASE_LABELS[phase]}
+                        </button>
+                      ))}
+                    </div>
+
+                    {filteredDetailsPolicies.length === 0 ? (
+                      <div className="flex flex-1 items-center justify-center rounded-[28px] border border-dashed border-slate/15 bg-slate/5 px-6 text-sm text-slate/60">
+                        No policies match the selected phase.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
+                          <button
+                            type="button"
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate/10 bg-white text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                            onClick={() =>
+                              setDetailsPolicyIndex((current) =>
+                                current === 0
+                                  ? filteredDetailsPolicies.length - 1
+                                  : current - 1
+                              )
+                            }
+                            disabled={filteredDetailsPolicies.length <= 1}
+                            aria-label="Previous policy tab"
+                          >
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              className="h-4 w-4"
+                              aria-hidden="true"
+                            >
+                              <path
+                                d="M11.75 4.5 6.25 10l5.5 5.5"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+
+                          <div className="overflow-hidden">
+                            <div
+                              className="flex gap-3 transition-transform duration-300 ease-out"
+                              style={{
+                                transform: `translateX(-${detailsPolicyTabOffset}px)`,
+                              }}
+                            >
+                              {filteredDetailsPolicies.map((policy, index) => (
+                                <button
+                                  key={policy.id}
+                                  type="button"
+                                  className={`w-[212px] shrink-0 rounded-[22px] border px-4 py-3 text-left transition ${
+                                    index === safeDetailsPolicyIndex
+                                      ? "border-ink bg-ink text-white shadow-sm"
+                                      : "border-slate/10 bg-white text-ink hover:border-slate/20 hover:bg-slate/5"
+                                  }`}
+                                  onClick={() => setDetailsPolicyIndex(index)}
+                                >
+                                  <p className="truncate text-sm font-semibold">{policy.name}</p>
+                                  <p
+                                    className={`mt-1 truncate text-[10px] uppercase tracking-[0.2em] ${
+                                      index === safeDetailsPolicyIndex
+                                        ? "text-white/70"
+                                        : "text-slate/50"
+                                    }`}
+                                  >
+                                    {policy.id}
+                                  </p>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate/10 bg-white text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                            onClick={() =>
+                              setDetailsPolicyIndex((current) =>
+                                current >= filteredDetailsPolicies.length - 1
+                                  ? 0
+                                  : current + 1
+                              )
+                            }
+                            disabled={filteredDetailsPolicies.length <= 1}
+                            aria-label="Next policy tab"
+                          >
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="none"
+                              className="h-4 w-4"
+                              aria-hidden="true"
+                            >
+                              <path
+                                d="m8.25 4.5 5.5 5.5-5.5 5.5"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+                        </div>
+
+                        <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+                          <div className="flex min-h-0 h-full flex-col rounded-[28px] border border-slate/10 bg-white p-5">
+                            <div className="flex flex-wrap items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <p className="text-lg font-semibold text-ink">
+                                  {activeDetailsPolicy?.name}
+                                </p>
+                                <p className="mt-1 break-all text-[10px] uppercase tracking-[0.3em] text-slate/50">
+                                  {activeDetailsPolicy?.id}
+                                </p>
+                              </div>
+                              <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
+                                {activeDetailsPolicy?.type}
+                              </span>
+                            </div>
+
+                            <pre className="mt-4 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-2xl bg-slate/5 px-4 py-3 text-[11px] text-slate">
+                              {formatJson(activeDetailsPolicy?.config)}
+                            </pre>
+                          </div>
+
+                          <aside className="rounded-[28px] border border-slate/10 bg-slate/5 p-5">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                              Policy Summary
+                            </p>
+                            <p className="mt-2 text-sm text-slate">
+                              Use the arrows to move through policies without scrolling the whole dialog.
+                            </p>
+
+                            <div className="mt-5 space-y-4 text-sm text-slate">
+                              <div className="rounded-2xl bg-white px-4 py-3">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate/50">
+                                  Status
+                                </p>
+                                <p className="mt-2 font-semibold text-ink">
+                                  {activeDetailsPolicy?.enabled ? "Enabled" : "Disabled"}
+                                </p>
+                              </div>
+
+                              <div className="rounded-2xl bg-white px-4 py-3">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate/50">
+                                  Phases
+                                </p>
+                                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
+                                  {activeDetailsPolicy?.phases?.map((phase) => (
+                                    <span
+                                      key={`${activeDetailsPolicy?.id ?? "policy"}-${phase}`}
+                                      className="rounded-full bg-slate/10 px-3 py-1"
+                                    >
+                                      {PHASE_LABELS[phase]}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+
+                              <div className="rounded-2xl bg-white px-4 py-3">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate/50">
+                                  Position
+                                </p>
+                                <p className="mt-2 font-semibold text-ink">
+                                  {safeDetailsPolicyIndex + 1} / {filteredDetailsPolicies.length}
+                                </p>
+                              </div>
+                            </div>
+                          </aside>
+                        </div>
+                      </>
                     )}
                   </div>
-                </div>
+                )
               ) : (
-                <div className="py-10 text-center text-sm text-slate/50">
+                <div className="flex h-full items-center justify-center text-sm text-slate/50">
                   No snapshot loaded yet.
                 </div>
               )}

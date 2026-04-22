@@ -31,6 +31,11 @@ type ExtensionConnectRequest =
         retentionLocalDays: number;
         debug: boolean;
         allowedDomains: string[];
+        browserSecurity: {
+          enabled: boolean;
+          mode: "audit" | "enforce";
+          shadowAiDomains?: string[];
+        };
       };
     };
 
@@ -231,6 +236,10 @@ export default function ExtensionConnectPage() {
           "gemini.google.com",
           "claude.ai",
         ],
+        browserSecurity: {
+          enabled: true,
+          mode: "enforce",
+        },
       },
     };
 
@@ -405,7 +414,7 @@ export default function ExtensionConnectPage() {
         <p className="font-semibold text-ink">Next step</p>
         <p className="mt-1">
           After a successful connect, open ChatGPT/Gemini/Claude and submit one prompt,
-          then check events on{" "}
+          or try an unapproved AI site to confirm browser blocking, then check events on{" "}
           <Link href="/extension-monitoring" className="font-semibold text-ink hover:underline">
             Extension Monitoring
           </Link>

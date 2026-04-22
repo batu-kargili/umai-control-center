@@ -2,6 +2,24 @@ const API_BASE = "/api/admin";
 const PUBLIC_API_BASE = "/api/public";
 const MAX_AUDIT_EVENT_LIMIT = 500;
 
+function adminJsonHeaders(tenantId?: string): HeadersInit {
+    const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+    };
+    if (tenantId?.trim()) {
+        headers["X-Tenant-Id"] = tenantId.trim();
+    }
+    return headers;
+}
+
+function adminTenantHeaders(tenantId?: string): HeadersInit {
+    const headers: Record<string, string> = {};
+    if (tenantId?.trim()) {
+        headers["X-Tenant-Id"] = tenantId.trim();
+    }
+    return headers;
+}
+
 async function readApiErrorMessage(res: Response, fallback: string): Promise<string> {
     try {
         const payload = await res.json();
@@ -42,8 +60,35 @@ export interface License {
     features_json?: Record<string, unknown> | null;
 }
 
-export type PolicyPhase = "PRE_LLM" | "POST_LLM";
+export type PolicyPhase =
+    | "PRE_LLM"
+    | "POST_LLM"
+    | "TOOL_INPUT"
+    | "TOOL_OUTPUT"
+    | "MCP_REQUEST"
+    | "MCP_RESPONSE"
+    | "MEMORY_WRITE";
 export type PolicyScope = "ORGANIZATION" | "ENVIRONMENT" | "PROJECT";
+
+export const POLICY_PHASE_OPTIONS: PolicyPhase[] = [
+    "PRE_LLM",
+    "POST_LLM",
+    "TOOL_INPUT",
+    "TOOL_OUTPUT",
+    "MCP_REQUEST",
+    "MCP_RESPONSE",
+    "MEMORY_WRITE",
+];
+
+export const POLICY_PHASE_LABELS: Record<PolicyPhase, string> = {
+    PRE_LLM: "Before AI",
+    POST_LLM: "After AI",
+    TOOL_INPUT: "Tool Input",
+    TOOL_OUTPUT: "Tool Output",
+    MCP_REQUEST: "MCP Request",
+    MCP_RESPONSE: "MCP Response",
+    MEMORY_WRITE: "Memory Write",
+};
 
 export interface Policy {
     tenant_id: string;
@@ -95,6 +140,7 @@ export interface GuardrailSnapshot {
     preflight: Record<string, unknown>;
     policies: GuardrailSnapshotPolicy[];
     llm_config: Record<string, unknown>;
+    agt?: AgtConfig | null;
 }
 
 export interface GuardrailSnapshotResponse {
@@ -118,11 +164,68 @@ export interface ChatMessage {
     content: string;
 }
 
+export interface GuardrailInputArtifact {
+    artifact_type:
+        | "TOOL_INPUT"
+        | "TOOL_OUTPUT"
+        | "MCP_REQUEST"
+        | "MCP_RESPONSE"
+        | "MEMORY_WRITE"
+        | "CUSTOM";
+    name?: string | null;
+    payload_summary?: string | null;
+    metadata: Record<string, unknown>;
+}
+
 export interface GuardrailInputPayload {
     messages: ChatMessage[];
     phase_focus: PhaseFocus;
     content_type: ContentType;
     language?: string;
+    artifacts?: GuardrailInputArtifact[];
+}
+
+export interface AgtPolicyCondition {
+    field: string;
+    operator:
+        | "EQUALS"
+        | "NOT_EQUALS"
+        | "IN"
+        | "NOT_IN"
+        | "CONTAINS"
+        | "MATCHES_REGEX"
+        | "EXISTS"
+        | "NOT_EXISTS"
+        | "STARTS_WITH"
+        | "ENDS_WITH"
+        | "GT"
+        | "GTE"
+        | "LT"
+        | "LTE";
+    value?: unknown;
+}
+
+export interface AgtPolicyRule {
+    id: string;
+    description?: string | null;
+    effect: "ALLOW" | "BLOCK" | "STEP_UP_APPROVAL" | "ALLOW_WITH_WARNINGS";
+    severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    conditions: AgtPolicyCondition[];
+}
+
+export interface AgtPolicyDocument {
+    version: string;
+    default_action: "ALLOW" | "BLOCK" | "STEP_UP_APPROVAL" | "ALLOW_WITH_WARNINGS";
+    rules: AgtPolicyRule[];
+}
+
+export interface AgtConfig {
+    enabled: boolean;
+    mode: "ENFORCE" | "ADVISORY";
+    enforced_phases: PolicyPhase[];
+    policy_document: AgtPolicyDocument;
+    bundle_ref?: string | null;
+    fail_closed: boolean;
 }
 
 export interface GuardrailTestDecision {
@@ -379,6 +482,7 @@ export interface GuardrailLibraryItem {
     phases: PolicyPhase[];
     preflight: Record<string, unknown>;
     llm_config: Record<string, unknown>;
+    agt?: AgtConfig | null;
     policies: GuardrailLibraryPolicy[];
     managed: boolean;
     tags?: string[];
@@ -409,6 +513,7 @@ export interface AgenticGuardrailDraft {
         phases: PolicyPhase[];
         preflight: Record<string, unknown>;
         llm_config: Record<string, unknown>;
+        agt?: AgtConfig | null;
     };
     policies: AgenticPolicyDraft[];
     rationale: string;
@@ -459,7 +564,7 @@ export async function createEnvironment(payload: {
 }): Promise<Environment> {
     const res = await fetch(`${API_BASE}/environments`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to create environment");
@@ -467,7 +572,9 @@ export async function createEnvironment(payload: {
 }
 
 export async function fetchProjects(tenantId: string, envId: string): Promise<Project[]> {
-    const res = await fetch(`${API_BASE}/projects/${tenantId}/${envId}`);
+    const res = await fetch(`${API_BASE}/projects/${tenantId}/${envId}`, {
+        headers: adminTenantHeaders(tenantId),
+    });
     if (!res.ok) throw new Error("Failed to fetch projects");
     return res.json();
 }
@@ -480,7 +587,7 @@ export async function createProject(payload: {
 }): Promise<Project> {
     const res = await fetch(`${API_BASE}/projects`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to create project");
@@ -507,7 +614,7 @@ export async function createApiKey(payload: {
 }): Promise<ApiKeyResponse> {
     const res = await fetch(`${API_BASE}/api-keys`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to create API key");
@@ -557,7 +664,7 @@ export async function fetchPolicies(
 export async function createPolicy(payload: Omit<Policy, "created_at">): Promise<Policy> {
     const res = await fetch(`${API_BASE}/policies`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -601,7 +708,7 @@ export async function fetchGuardrails(
 export async function createGuardrail(payload: Omit<Guardrail, "current_version"> & { current_version?: number }): Promise<Guardrail> {
     const res = await fetch(`${API_BASE}/guardrails`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -635,12 +742,13 @@ export async function createGuardrailVersion(
         preflight?: Record<string, unknown>;
         llm_config?: Record<string, unknown>;
         phases?: PolicyPhase[];
+        agt?: AgtConfig;
         snapshot_json?: Record<string, unknown>;
     }
 ): Promise<GuardrailVersion> {
     const res = await fetch(`${API_BASE}/guardrails/${guardrailId}/versions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -657,11 +765,16 @@ export async function publishGuardrailVersion(
         tenant_id: string;
         environment_id: string;
         project_id: string;
+        publisher_id?: string;
+        approver_id?: string;
+        bypass_eval_gate?: boolean;
+        bypass_reason?: string;
+        break_glass_reason?: string;
     }
 ): Promise<{ redis_key: string }> {
     const res = await fetch(`${API_BASE}/guardrails/${guardrailId}/publish/${version}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -701,7 +814,7 @@ export async function testGuardrail(payload: {
 }): Promise<GuardrailTestResponse> {
     const res = await fetch(`${API_BASE}/test/guard`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to test guardrail");
@@ -854,7 +967,7 @@ export async function createEvidencePack(payload: {
 }): Promise<EvidencePackItem> {
     const res = await fetch(`${API_BASE}/evidence-packs`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to create evidence pack");
@@ -924,7 +1037,7 @@ export async function deployPolicyTemplate(payload: {
 }): Promise<Policy> {
     const res = await fetch(`${API_BASE}/library/policies/deploy`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to deploy policy template");
@@ -949,7 +1062,7 @@ export async function deployGuardrailTemplate(payload: {
 }): Promise<GuardrailLibraryDeployResponse> {
     const res = await fetch(`${API_BASE}/library/guardrails/deploy`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminJsonHeaders(payload.tenant_id),
         body: JSON.stringify(payload),
     });
     if (!res.ok) {

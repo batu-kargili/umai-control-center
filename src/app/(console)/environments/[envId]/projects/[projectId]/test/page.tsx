@@ -7,20 +7,26 @@ import {
   ChatRole,
   ContentType,
   Guardrail,
+  GuardrailInputArtifact,
+  GuardrailSnapshotResponse,
   GuardrailTestResponse,
   GuardrailVersion,
   PhaseFocus,
+  POLICY_PHASE_LABELS,
+  POLICY_PHASE_OPTIONS,
   PolicyPhase,
+  fetchGuardrailSnapshot,
   fetchGuardrailVersions,
   fetchGuardrails,
   testGuardrail,
 } from "src/lib/api";
 import { useConsole } from "src/app/(console)/console-context";
 
-const PHASE_OPTIONS: PolicyPhase[] = ["PRE_LLM", "POST_LLM"];
+const PHASE_OPTIONS: PolicyPhase[] = POLICY_PHASE_OPTIONS;
 const FOCUS_OPTIONS: PhaseFocus[] = ["LAST_USER_MESSAGE", "LAST_ASSISTANT_MESSAGE"];
 const CONTENT_TYPES: ContentType[] = ["text", "markdown", "json"];
 const ROLE_OPTIONS: ChatRole[] = ["system", "user", "assistant"];
+const ACTION_PHASES: PolicyPhase[] = ["TOOL_INPUT", "MCP_REQUEST", "MEMORY_WRITE"];
 
 type TestHistoryItem = {
   id: string;
@@ -39,6 +45,116 @@ const createMessage = (): ChatMessage => ({
   content: "",
 });
 
+const inferActionPhaseAction = (phase: PolicyPhase, content: string): string => {
+  if (phase === "MEMORY_WRITE") {
+    return "write";
+  }
+  if (
+    /(?:delete|remove|drop|destroy|wipe|erase|sil|kaldır|yok et)/i.test(content)
+  ) {
+    return "delete";
+  }
+  if (
+    /(?:export|share|send|publish|upload|email|forward|dışa aktar|paylaş|gönder|yayınla|yükle)/i.test(
+      content
+    )
+  ) {
+    return "export";
+  }
+  if (
+    /(?:write|update|create|save|store|record|modify|grant|revoke|izin|yetki|oluştur|kaydet|güncelle|değiştir)/i.test(
+      content
+    )
+  ) {
+    return "write";
+  }
+  return "read";
+};
+
+const inferActionPhaseClassification = (content: string): string | undefined => {
+  if (
+    /(?:password|şifre|otp|token|api key|secret|credential|kimlik bilgisi)/i.test(
+      content
+    )
+  ) {
+    return "credential_material";
+  }
+  if (/(?:yurt dış|abroad|cross-border|foreign|overseas)/i.test(content)) {
+    return "cross_border_transfer_unapproved";
+  }
+  if (/(?:konum|location|cell tower|base station)/i.test(content)) {
+    return "location_data";
+  }
+  if (/(?:cdr|traffic data|trafik verisi|arama kaydı)/i.test(content)) {
+    return "traffic_data";
+  }
+  if (
+    /(?:health|sağlık|religion|din|belief|inanç|politic|siyasi|biometric|biyometrik)/i.test(
+      content
+    )
+  ) {
+    return "special_category";
+  }
+  if (
+    /(?:subscriber|abon|müşteri|customer|msisdn|imei|imsi|iccid|tckn|tc kimlik)/i.test(
+      content
+    )
+  ) {
+    return "customer_pii";
+  }
+  return undefined;
+};
+
+const buildDefaultActionArtifact = (
+  phase: PolicyPhase,
+  messages: ChatMessage[]
+): GuardrailInputArtifact | null => {
+  if (!ACTION_PHASES.includes(phase)) {
+    return null;
+  }
+  const content = messages
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  if (!content) {
+    return null;
+  }
+  const action = inferActionPhaseAction(phase, content);
+  const classification = inferActionPhaseClassification(content);
+  const isReadOnly = action === "read";
+  const metadata: Record<string, unknown> = {
+    agent_id: "playground-agent",
+    action,
+    capability: phase.toLowerCase(),
+    params: { prompt: content },
+  };
+  if (classification) {
+    metadata.classification = classification;
+  }
+  if (!isReadOnly) {
+    metadata.side_effect = true;
+  }
+  if (phase === "TOOL_INPUT") {
+    metadata.tool_name = /(?:müşteri|abon|subscriber|customer)/i.test(content)
+      ? "subscriber.lookup"
+      : "project.lookup";
+  }
+  if (phase === "MCP_REQUEST") {
+    metadata.server_name = "project-mcp";
+    metadata.method = action === "delete" ? "delete" : action === "export" ? "write" : "read";
+  }
+  if (phase === "MEMORY_WRITE") {
+    metadata.memory_scope = "conversation";
+  }
+  return {
+    artifact_type: phase as GuardrailInputArtifact["artifact_type"],
+    name: null,
+    payload_summary: content.slice(0, 160),
+    metadata,
+  };
+};
+
 export default function TestPage() {
   const { envId, projectId } = useParams() as { envId: string; projectId: string };
   const { tenantId } = useConsole();
@@ -49,6 +165,8 @@ export default function TestPage() {
 
   const [selectedGuardrailId, setSelectedGuardrailId] = useState("");
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<GuardrailSnapshotResponse | null>(null);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [phase, setPhase] = useState<PolicyPhase>("PRE_LLM");
   const [phaseFocus, setPhaseFocus] = useState<PhaseFocus>("LAST_USER_MESSAGE");
   const [contentType, setContentType] = useState<ContentType>("text");
@@ -62,10 +180,39 @@ export default function TestPage() {
   const [result, setResult] = useState<GuardrailTestResponse | null>(null);
   const [history, setHistory] = useState<TestHistoryItem[]>([]);
 
+  const isActionPhase = ACTION_PHASES.includes(phase);
+
   const selectedGuardrail = useMemo(
     () => guardrails.find((item) => item.guardrail_id === selectedGuardrailId) || null,
     [guardrails, selectedGuardrailId]
   );
+
+  const snapshotPayload = selectedSnapshot?.snapshot ?? null;
+  const availablePhaseOptions = useMemo<PolicyPhase[]>(
+    () => snapshotPayload?.phases?.length ? snapshotPayload.phases : PHASE_OPTIONS,
+    [snapshotPayload]
+  );
+  const selectedPhasePolicyCount = useMemo(
+    () =>
+      snapshotPayload
+        ? snapshotPayload.policies.filter((policy) => policy.phases.includes(phase)).length
+        : 0,
+    [snapshotPayload, phase]
+  );
+  const selectedPhaseUsesAgt = useMemo(
+    () => Boolean(snapshotPayload?.agt?.enabled && snapshotPayload.agt.enforced_phases.includes(phase)),
+    [snapshotPayload, phase]
+  );
+  const snapshotModeLabel = useMemo(() => {
+    if (!snapshotPayload) return null;
+    if (snapshotPayload.policies.length === 0 && snapshotPayload.agt?.enabled) {
+      return "AGT-only action governance";
+    }
+    if (snapshotPayload.agt?.enabled) {
+      return "Policies + AGT governance";
+    }
+    return "Policy-driven guardrail";
+  }, [snapshotPayload]);
 
   useEffect(() => {
     if (!envId || !projectId || !tenantId) return;
@@ -87,6 +234,7 @@ export default function TestPage() {
     if (!selectedGuardrailId || !envId || !projectId || !tenantId) {
       setGuardrailVersions([]);
       setSelectedVersion(null);
+      setSelectedSnapshot(null);
       return;
     }
     fetchGuardrailVersions(tenantId, envId, projectId, selectedGuardrailId)
@@ -105,6 +253,40 @@ export default function TestPage() {
         setSelectedVersion(selectedGuardrail?.current_version ?? null);
       });
   }, [envId, projectId, selectedGuardrailId, selectedGuardrail?.current_version, tenantId]);
+
+  useEffect(() => {
+    if (!selectedGuardrailId || !selectedVersion || !envId || !projectId || !tenantId) {
+      setSelectedSnapshot(null);
+      return;
+    }
+    setSnapshotLoading(true);
+    fetchGuardrailSnapshot(tenantId, envId, projectId, selectedGuardrailId, selectedVersion)
+      .then((data) => {
+        setSelectedSnapshot(data);
+        setError(null);
+      })
+      .catch((err: Error) => {
+        console.error(err);
+        setSelectedSnapshot(null);
+        setError("Unable to load guardrail snapshot details for testing.");
+      })
+      .finally(() => setSnapshotLoading(false));
+  }, [envId, projectId, selectedGuardrailId, selectedVersion, tenantId]);
+
+  useEffect(() => {
+    if (availablePhaseOptions.length === 0) return;
+    if (!availablePhaseOptions.includes(phase)) {
+      setPhase(availablePhaseOptions[0]);
+    }
+  }, [availablePhaseOptions, phase]);
+
+  useEffect(() => {
+    setPhaseFocus(
+      phase === "POST_LLM" || phase === "TOOL_OUTPUT" || phase === "MCP_RESPONSE"
+        ? "LAST_ASSISTANT_MESSAGE"
+        : "LAST_USER_MESSAGE"
+    );
+  }, [phase]);
 
   const updateMessage = <K extends keyof ChatMessage>(
     index: number,
@@ -164,6 +346,16 @@ export default function TestPage() {
       }
     }
 
+    let artifacts: GuardrailInputArtifact[] | undefined;
+    if (isActionPhase) {
+      const artifact = buildDefaultActionArtifact(phase, normalizedMessages);
+      if (!artifact) {
+        setTestError("Action phase tests require at least one message.");
+        return;
+      }
+      artifacts = [artifact];
+    }
+
     setRunning(true);
     try {
       const response = await testGuardrail({
@@ -178,6 +370,7 @@ export default function TestPage() {
           phase_focus: phaseFocus,
           content_type: contentType,
           language: language.trim() || undefined,
+          artifacts,
         },
         timeout_ms: timeoutRaw ? Number(timeoutRaw) : undefined,
         allow_llm_calls: allowLlmCalls,
@@ -299,10 +492,11 @@ export default function TestPage() {
                     className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
                     value={phase}
                     onChange={(event) => setPhase(event.target.value as PolicyPhase)}
+                    disabled={availablePhaseOptions.length === 0}
                   >
-                    {PHASE_OPTIONS.map((option) => (
+                    {availablePhaseOptions.map((option) => (
                       <option key={option} value={option}>
-                        {option}
+                        {POLICY_PHASE_LABELS[option]} ({option})
                       </option>
                     ))}
                   </select>
@@ -325,6 +519,39 @@ export default function TestPage() {
                   </select>
                 </div>
               </div>
+
+              {snapshotPayload && (
+                <div className="rounded-2xl border border-slate/10 bg-white px-4 py-3 text-xs text-slate">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {snapshotModeLabel ? (
+                      <span className="rounded-full bg-slate/10 px-2 py-1 font-semibold text-ink">
+                        {snapshotModeLabel}
+                      </span>
+                    ) : null}
+                    <span className="rounded-full bg-slate/10 px-2 py-1">
+                      v{selectedVersion}
+                    </span>
+                    {selectedPhasePolicyCount > 0 ? (
+                      <span className="rounded-full bg-slate/10 px-2 py-1">
+                        {selectedPhasePolicyCount} policy check
+                        {selectedPhasePolicyCount === 1 ? "" : "s"} on {phase}
+                      </span>
+                    ) : null}
+                    {selectedPhaseUsesAgt ? (
+                      <span className="rounded-full bg-slate/10 px-2 py-1">
+                        AGT enforced on {phase}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-[11px]">
+                    {selectedPhasePolicyCount === 0 && selectedPhaseUsesAgt
+                      ? "This phase is governed by AGT action rules. The playground derives a default action request from your prompt."
+                      : selectedPhasePolicyCount > 0
+                        ? "This phase has active heuristic or context-aware policy checks."
+                        : "This selected version does not have active controls for this phase."}
+                  </p>
+                </div>
+              )}
 
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="space-y-2">
@@ -377,6 +604,9 @@ export default function TestPage() {
                 />
                 Allow LLM calls during test
               </label>
+              {snapshotLoading && (
+                <p className="text-[11px] text-slate/60">Loading selected version coverage...</p>
+              )}
             </div>
 
             <div className="rounded-2xl border border-slate/10 bg-white p-4 space-y-4">

@@ -14,7 +14,11 @@ function copyRequestHeaders(request: Request): Headers {
   const copyNames = [
     "content-type",
     "accept",
+    "authorization",
     "x-tenant-id",
+    "x-device-id",
+    "x-duvarai-api-key",
+    "x-umai-api-key",
   ];
   for (const name of copyNames) {
     const value = request.headers.get(name);

@@ -1,4 +1,10 @@
-import { Policy, PolicyPhase, PolicyScope } from "src/lib/api";
+import {
+  Policy,
+  PolicyPhase,
+  PolicyScope,
+  POLICY_PHASE_LABELS,
+  POLICY_PHASE_OPTIONS,
+} from "src/lib/api";
 
 export type ConfidenceLevel = "low" | "medium" | "high";
 export type DraftDecision = "BLOCK" | "ALLOW";
@@ -46,11 +52,8 @@ export type StarterDefinition = {
   build: (args: DraftArgs) => PolicyDraft;
 };
 
-export const PHASE_OPTIONS: PolicyPhase[] = ["PRE_LLM", "POST_LLM"];
-export const PHASE_LABELS: Record<PolicyPhase, string> = {
-  PRE_LLM: "Before AI",
-  POST_LLM: "After AI",
-};
+export const PHASE_OPTIONS: PolicyPhase[] = POLICY_PHASE_OPTIONS;
+export const PHASE_LABELS: Record<PolicyPhase, string> = POLICY_PHASE_LABELS;
 
 const DEFAULT_OUTPUT_SCHEMA = {
   violation_field: "violation",
