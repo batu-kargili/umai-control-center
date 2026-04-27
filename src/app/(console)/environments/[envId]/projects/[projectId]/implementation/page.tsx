@@ -39,7 +39,7 @@ def check_with_umai(user_message: str) -> dict:
         f"{BASE_URL}/guardrails/{GUARDRAIL_ID}/guard",
         headers={
             "Content-Type": "application/json",
-            "X-DuvarAI-Api-Key": API_KEY,
+            "X-Umai-Api-Key": API_KEY,
         },
         json={
             "phase": "PRE_LLM",
@@ -69,6 +69,55 @@ else:
         print(f"Triggered by: {policy['policy_id']}")`;
 }
 
+function buildAgentMeshPythonSnippet(guardrailId: string) {
+  return `import asyncio
+from umai import UmaiClient
+from umai.stores import FileIdentityStore
+
+BASE_URL = "https://your-umai-host"
+API_KEY = "paste-your-project-api-key"
+BOOTSTRAP_TOKEN = "paste-one-time-agent-bootstrap-token"
+GUARDRAIL_ID = "${guardrailId}"
+
+async def main():
+    umai = UmaiClient(endpoint=BASE_URL, api_key=API_KEY, fail_closed=True)
+    agent = umai.agent(
+        "operations-assistant",
+        identity_store=FileIdentityStore(allow_plaintext_private_key=True),
+    )
+
+    if not agent.identity or not agent.identity.is_registered:
+        await agent.register(
+            bootstrap_token=BOOTSTRAP_TOKEN,
+            display_name="Operations Assistant",
+            runtime="openai-agents",
+            capabilities=["crm:read", "orders:read"],
+        )
+
+    run = await agent.start_run(
+        guardrail_id=GUARDRAIL_ID,
+        metadata={"adapter": "openai-agents"},
+    )
+
+    decision = await agent.guard_tool_input(
+        guardrail_id=GUARDRAIL_ID,
+        run_id=run.run_id,
+        step_id="crm-lookup-1",
+        tool_name="crm.get_customer_profile",
+        payload_summary="Read customer profile",
+        messages=[{"role": "assistant", "content": "Call CRM lookup"}],
+        metadata={
+            "action": "lookup",
+            "classification": "customer_pii",
+        },
+    )
+
+    await agent.complete_run(run.run_id, status="COMPLETED")
+    print(agent.identity.agent_did, decision.decision.action)
+
+asyncio.run(main())`;
+}
+
 function buildJavaScriptSnippet(guardrailId: string) {
   return `const baseUrl = "https://your-umai-host/api/public";
 const apiKey = "paste-your-api-key";
@@ -79,7 +128,7 @@ async function checkWithUmai(userMessage) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-DuvarAI-Api-Key": apiKey,
+      "X-Umai-Api-Key": apiKey,
     },
     body: JSON.stringify({
       phase: "PRE_LLM",
@@ -172,7 +221,7 @@ public class UmaiGuardrailExample {
             .uri(URI.create(BASE_URL + "/guardrails/" + GUARDRAIL_ID + "/guard"))
             .timeout(Duration.ofSeconds(10))
             .header("Content-Type", "application/json")
-            .header("X-DuvarAI-Api-Key", API_KEY)
+            .header("X-Umai-Api-Key", API_KEY)
             .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(payload)))
             .build();
 
@@ -223,7 +272,7 @@ async Task<JsonDocument> CheckWithUmaiAsync(string userMessage)
         HttpMethod.Post,
         baseUrl + "/guardrails/" + guardrailId + "/guard"
     );
-    request.Headers.Add("X-DuvarAI-Api-Key", apiKey);
+    request.Headers.Add("X-Umai-Api-Key", apiKey);
     request.Content = new StringContent(
         JsonSerializer.Serialize(payload),
         Encoding.UTF8,
@@ -317,7 +366,7 @@ function CodeExampleEditor({
 
   return (
     <div className="overflow-hidden rounded-[28px] border border-slate/10 bg-[#0f1117] shadow-sm">
-      <div className="border-b border-white/8 bg-[#151823] px-4 py-4">
+      <div className="border-b border-white/10 bg-[#151823] px-4 py-4">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -356,14 +405,14 @@ function CodeExampleEditor({
       </div>
 
       <div className="overflow-auto">
-        <div className="min-w-max px-0 py-4 font-mono text-xs leading-6 text-white/92">
+        <div className="min-w-max px-0 py-4 font-mono text-xs leading-6">
           {codeLines.map((line, index) => (
             <div
               key={`${selectedOption.id}-line-${index + 1}`}
               className="grid grid-cols-[3rem_minmax(0,1fr)] gap-4 px-4"
             >
               <span className="select-none text-right text-white/25">{index + 1}</span>
-              <span className="whitespace-pre">{line || " "}</span>
+              <span className="whitespace-pre text-[#f4f7fb]">{line || " "}</span>
             </div>
           ))}
         </div>
@@ -464,6 +513,10 @@ export default function ImplementationPage() {
     [sampleGuardrailId]
   );
   const activeSnippet = codeSnippets[selectedLanguage];
+  const agentMeshSnippet = useMemo(
+    () => buildAgentMeshPythonSnippet(sampleGuardrailId),
+    [sampleGuardrailId]
+  );
 
   const guardrailsHref = `/environments/${envId}/projects/${projectId}/guardrails`;
   const apiKeysHref = `/environments/${envId}/projects/${projectId}/api-keys`;
@@ -575,7 +628,7 @@ export default function ImplementationPage() {
         >
           <p className="text-sm text-slate">
             Create a project API key, keep it in your server-side secrets, and send it with
-            each request. UMAI accepts <code>X-DuvarAI-Api-Key</code> or{" "}
+            each request. UMAI accepts <code>X-Umai-Api-Key</code> or{" "}
             <code>Authorization: Bearer</code>.
           </p>
 
@@ -618,6 +671,20 @@ export default function ImplementationPage() {
             onLanguageChange={setSelectedLanguage}
             code={activeSnippet}
           />
+        </StepCard>
+
+        <StepCard
+          step="4"
+          title="Agent Mesh Work Tree"
+          icon={<Code2 className="h-5 w-5" />}
+        >
+          <p className="text-sm text-slate">
+            Use the Python SDK when an agent needs signed identity, run sessions,
+            tool-step recording, and Control Center work-tree visibility.
+          </p>
+          <pre className="max-h-[520px] overflow-auto rounded-2xl border border-slate/10 bg-[#0c1220] p-4 text-xs leading-5 text-white">
+            <code>{agentMeshSnippet}</code>
+          </pre>
         </StepCard>
       </div>
     </div>

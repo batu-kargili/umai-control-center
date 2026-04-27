@@ -28,7 +28,8 @@ import {
   LifeBuoy,
   ChevronRight,
   Activity,
-  KeyRound
+  KeyRound,
+  Bot
 } from "lucide-react";
 
 function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding" }) {
@@ -186,7 +187,7 @@ function Breadcrumbs() {
     if (segment === "api-keys") label = "API Keys";
     if (segment === "implementation") label = "Implementation";
     if (segment === "extension") label = "Extension";
-    if (segment === "connect") label = "Connect";
+    if (segment === "connect") label = "Monitoring";
     if (segment === "extension-monitoring") label = "Extension Monitoring";
 
     crumbs.push({ label, href: currentPath });
@@ -216,14 +217,14 @@ function NavRail() {
   const railItems = [
     { label: "Home", href: "/home", icon: Home },
     { label: "Environments", href: "/environments", icon: Layers },
-    { label: "Extension", href: "/extension/connect", icon: Activity },
+    { label: "Extension", href: "/extension-monitoring", icon: Activity },
   ];
 
   return (
     <div className="w-[56px] bg-[#fcfdff] border-r border-secondary/10 flex flex-col items-center py-6 gap-6 z-50 shrink-0 h-full">
       {railItems.map((item) => (
         (() => {
-          const isExtensionRail = item.href === "/extension/connect";
+          const isExtensionRail = item.href === "/extension-monitoring";
           const isActive = isExtensionRail
             ? pathname.startsWith("/extension/") || pathname.startsWith("/extension-monitoring")
             : pathname.startsWith(item.href);
@@ -298,6 +299,7 @@ function Sidebar() {
                   { label: "Policies", href: "policies", icon: FileText },
                   { label: "Test", href: "test", icon: FlaskConical },
                   { label: "Evaluation", href: "evaluation", icon: BarChart3 },
+                  { label: "Agents", href: "agents", icon: Bot },
                   { label: "Implementation", href: "implementation", icon: Code2 },
                   { label: "API Keys", href: "api-keys", icon: KeyRound },
                   { label: "Alerts", href: "alerts", icon: Bell },

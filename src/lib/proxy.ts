@@ -17,7 +17,7 @@ function copyRequestHeaders(request: Request): Headers {
     "authorization",
     "x-tenant-id",
     "x-device-id",
-    "x-duvarai-api-key",
+    "x-umai-api-key",
     "x-umai-api-key",
   ];
   for (const name of copyNames) {

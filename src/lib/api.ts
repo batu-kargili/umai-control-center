@@ -520,6 +520,94 @@ export interface AgenticGuardrailDraft {
     notes: string[];
 }
 
+export interface AgentRegistryItem {
+    tenant_id: string;
+    environment_id: string;
+    project_id: string;
+    agent_id: string;
+    display_name: string;
+    runtime: string;
+    owner?: string | null;
+    risk_tier: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    status: "ACTIVE" | "DISABLED" | "DEPRECATED";
+    agent_did?: string | null;
+    public_key_fingerprint?: string | null;
+    capabilities: string[];
+    trust_score: number;
+    trust_tier: string;
+    identity_status: string;
+    kill_switch_enabled: boolean;
+    kill_switch_reason?: string | null;
+    last_seen_at?: string | null;
+    metadata?: Record<string, unknown> | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface AgentBootstrapTokenResponse {
+    token_id: string;
+    tenant_id: string;
+    environment_id: string;
+    project_id: string;
+    agent_id: string;
+    bootstrap_token: string;
+    expires_at: string;
+}
+
+export interface AgentRunSession {
+    tenant_id: string;
+    environment_id: string;
+    project_id: string;
+    run_id: string;
+    agent_id: string;
+    agent_did: string;
+    guardrail_id?: string | null;
+    status: string;
+    decision_action?: string | null;
+    decision_severity?: string | null;
+    trust_score?: number | null;
+    trust_tier?: string | null;
+    summary?: Record<string, unknown> | null;
+    started_at?: string | null;
+    updated_at?: string | null;
+    completed_at?: string | null;
+    step_count: number;
+}
+
+export interface AgentRunStep {
+    run_id: string;
+    step_id: string;
+    parent_step_id?: string | null;
+    sequence: number;
+    event_type: string;
+    phase?: string | null;
+    status: string;
+    agent_id: string;
+    agent_did: string;
+    action?: string | null;
+    resource_type?: string | null;
+    resource_name?: string | null;
+    decision_action?: string | null;
+    decision_severity?: string | null;
+    decision_reason?: string | null;
+    policy_id?: string | null;
+    matched_rule_id?: string | null;
+    latency_ms?: number | null;
+    payload_summary?: string | null;
+    metadata?: Record<string, unknown> | null;
+    input_hash?: string | null;
+    output_hash?: string | null;
+    prev_step_hash?: string | null;
+    step_hash?: string | null;
+    audit_event_id?: string | null;
+    created_at?: string | null;
+}
+
+export interface AgentRunDetail extends AgentRunSession {
+    steps: AgentRunStep[];
+    audit_events: AuditEventItem[];
+}
+
 export interface FreeSubscriptionResponse {
     tenant_id: string;
     plan: string;
@@ -1091,6 +1179,137 @@ export async function generateAgenticGuardrail(payload: {
         body: JSON.stringify(payload),
     });
     if (!res.ok) throw new Error("Failed to generate guardrail draft");
+    return res.json();
+}
+
+export async function fetchAgentRegistry(
+    tenantId: string,
+    envId: string,
+    projectId: string
+): Promise<AgentRegistryItem[]> {
+    const query = new URLSearchParams({ environment_id: envId, project_id: projectId });
+    const res = await fetch(`${API_BASE}/registry/agents?${query.toString()}`, {
+        headers: adminTenantHeaders(tenantId),
+    });
+    if (!res.ok) throw new Error("Failed to fetch agent registry");
+    return res.json();
+}
+
+export async function upsertAgentRegistry(payload: {
+    tenant_id: string;
+    environment_id: string;
+    project_id: string;
+    agent_id: string;
+    display_name: string;
+    runtime: string;
+    owner?: string;
+    risk_tier?: AgentRegistryItem["risk_tier"];
+    status?: AgentRegistryItem["status"];
+    capabilities?: string[];
+    trust_score?: number;
+    trust_tier?: string;
+    identity_status?: string;
+    kill_switch_enabled?: boolean;
+    metadata?: Record<string, unknown>;
+}): Promise<AgentRegistryItem> {
+    const res = await fetch(`${API_BASE}/registry/agents/${encodeURIComponent(payload.agent_id)}`, {
+        method: "PUT",
+        headers: adminJsonHeaders(payload.tenant_id),
+        body: JSON.stringify({
+            tenant_id: payload.tenant_id,
+            environment_id: payload.environment_id,
+            project_id: payload.project_id,
+            agent_id: payload.agent_id,
+            display_name: payload.display_name,
+            runtime: payload.runtime,
+            owner: payload.owner,
+            risk_tier: payload.risk_tier ?? "MEDIUM",
+            status: payload.status ?? "ACTIVE",
+            capabilities: payload.capabilities ?? [],
+            trust_score: payload.trust_score ?? 0.25,
+            trust_tier: payload.trust_tier ?? "SANDBOX",
+            identity_status: payload.identity_status ?? "UNREGISTERED",
+            kill_switch_enabled: payload.kill_switch_enabled ?? false,
+            metadata: payload.metadata ?? {},
+        }),
+    });
+    if (!res.ok) throw new Error("Failed to save agent");
+    return res.json();
+}
+
+export async function createAgentBootstrapToken(payload: {
+    tenant_id: string;
+    environment_id: string;
+    project_id: string;
+    agent_id: string;
+    expires_in_seconds?: number;
+}): Promise<AgentBootstrapTokenResponse> {
+    const res = await fetch(`${API_BASE}/registry/agents/${encodeURIComponent(payload.agent_id)}/bootstrap-token`, {
+        method: "POST",
+        headers: adminJsonHeaders(payload.tenant_id),
+        body: JSON.stringify({
+            tenant_id: payload.tenant_id,
+            environment_id: payload.environment_id,
+            project_id: payload.project_id,
+            expires_in_seconds: payload.expires_in_seconds ?? 900,
+        }),
+    });
+    if (!res.ok) throw new Error("Failed to create bootstrap token");
+    return res.json();
+}
+
+export async function updateAgentKillSwitch(payload: {
+    tenant_id: string;
+    environment_id: string;
+    project_id: string;
+    agent_id: string;
+    enabled: boolean;
+    reason?: string;
+}): Promise<AgentRegistryItem> {
+    const res = await fetch(`${API_BASE}/registry/agents/${encodeURIComponent(payload.agent_id)}/kill-switch`, {
+        method: "POST",
+        headers: adminJsonHeaders(payload.tenant_id),
+        body: JSON.stringify({
+            tenant_id: payload.tenant_id,
+            environment_id: payload.environment_id,
+            project_id: payload.project_id,
+            enabled: payload.enabled,
+            reason: payload.reason,
+        }),
+    });
+    if (!res.ok) throw new Error("Failed to update kill switch");
+    return res.json();
+}
+
+export async function fetchAgentRuns(
+    tenantId: string,
+    envId: string,
+    projectId: string,
+    params?: { agent_id?: string; status?: string; decision?: string; limit?: number }
+): Promise<AgentRunSession[]> {
+    const query = new URLSearchParams({ environment_id: envId, project_id: projectId });
+    if (params?.agent_id) query.set("agent_id", params.agent_id);
+    if (params?.status) query.set("status", params.status);
+    if (params?.decision) query.set("decision", params.decision);
+    query.set("limit", String(params?.limit ?? 100));
+    const res = await fetch(`${API_BASE}/agent-runs?${query.toString()}`, {
+        headers: adminTenantHeaders(tenantId),
+    });
+    if (!res.ok) throw new Error("Failed to fetch agent runs");
+    return res.json();
+}
+
+export async function fetchAgentRun(
+    tenantId: string,
+    envId: string,
+    projectId: string,
+    runId: string
+): Promise<AgentRunDetail> {
+    const query = new URLSearchParams({ environment_id: envId, project_id: projectId });
+    const res = await fetch(`${API_BASE}/agent-runs/${encodeURIComponent(runId)}?${query.toString()}`, {
+        headers: adminTenantHeaders(tenantId),
+    });
+    if (!res.ok) throw new Error("Failed to fetch agent run");
     return res.json();
 }
 

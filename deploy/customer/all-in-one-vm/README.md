@@ -87,22 +87,22 @@ Use the output to replace at least:
 Update `.env` for your VM:
 
 - Set `UMAI_ENGINE_IMAGE`, `UMAI_SERVICE_IMAGE`, and `UMAI_CONTROLCENTER_IMAGE`
-- Set `DUVARAI_CORS_ALLOW_ORIGINS=["http://umai-console.test:3000"]`
-- Set the `DUVARAI_DEFAULT_GUARDRAIL_LLM_*` values to the reachable LLM endpoint the engine should call
-- Keep `CONTROL_CENTER_ORGANIZATION_ID` and `DUVARAI_SEED_TENANT_ID` identical
-- Keep `CONTROL_CENTER_ORGANIZATION_NAME` and `DUVARAI_SEED_TENANT_NAME` aligned
-- If you change `DUVARAI_DATABASE_URL`, keep it aligned with [bootstrap/oracle/01-umai-bootstrap.sql](./bootstrap/oracle/01-umai-bootstrap.sql)
+- Set `UMAI_CORS_ALLOW_ORIGINS=["http://umai-console.test:3000"]`
+- Set the `UMAI_DEFAULT_GUARDRAIL_LLM_*` values to the reachable LLM endpoint the engine should call
+- Keep `CONTROL_CENTER_ORGANIZATION_ID` and `UMAI_SEED_TENANT_ID` identical
+- Keep `CONTROL_CENTER_ORGANIZATION_NAME` and `UMAI_SEED_TENANT_NAME` aligned
+- If you change `UMAI_DATABASE_URL`, keep it aligned with [bootstrap/oracle/01-umai-bootstrap.sql](./bootstrap/oracle/01-umai-bootstrap.sql)
 - If you change `LDAP_DOMAIN` or `LDAP_BASE_DN`, update [bootstrap/ldap/01-users.ldif](./bootstrap/ldap/01-users.ldif)
 
 Keep these values for hosts-file / HTTP mode:
 
 - `CONTROL_CENTER_SESSION_SECURE=false`
-- `DUVARAI_CORS_ALLOW_ORIGINS=["http://umai-console.test:3000"]`
+- `UMAI_CORS_ALLOW_ORIGINS=["http://umai-console.test:3000"]`
 
 License behavior:
 
-- For a quick internal demo, leave `DUVARAI_LICENSE_STRICT=false`
-- For a signed license, set `DUVARAI_LICENSE_STRICT=true`, fill `DUVARAI_LICENSE_PUBLIC_KEY`, and place `license.json` under `license/license.json`
+- For a quick internal demo, leave `UMAI_LICENSE_STRICT=false`
+- For a signed license, set `UMAI_LICENSE_STRICT=true`, fill `UMAI_LICENSE_PUBLIC_KEY`, and place `license.json` under `license/license.json`
 
 ## 5. Start the stack
 

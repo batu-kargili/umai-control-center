@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Shield, Monitor, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { RefreshCw, Shield, Monitor, AlertTriangle, CheckCircle2, Eye, X } from "lucide-react";
 
 import { useConsole } from "src/app/(console)/console-context";
 import {
@@ -32,6 +31,85 @@ function userLabel(event: ExtensionEventItem): string {
   return "-";
 }
 
+function payloadString(event: ExtensionEventItem, key: string): string | undefined {
+  const value = event.payload?.[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function payloadNumber(event: ExtensionEventItem, key: string): number | undefined {
+  const value = event.payload?.[key];
+  return typeof value === "number" ? value : undefined;
+}
+
+function transactionHash(event: ExtensionEventItem): string | null {
+  return (
+    event.prompt_hash ||
+    event.response_hash ||
+    payloadString(event, "prompt_text_hash") ||
+    payloadString(event, "response_text_hash") ||
+    payloadString(event, "user_justification_hash") ||
+    event.event_hash ||
+    null
+  );
+}
+
+function promptLength(event: ExtensionEventItem): number | undefined {
+  return (
+    event.prompt_len ??
+    payloadNumber(event, "prompt_text_len") ??
+    payloadNumber(event, "prompt_len")
+  );
+}
+
+function responseLength(event: ExtensionEventItem): number | undefined {
+  return (
+    event.response_len ??
+    payloadNumber(event, "response_text_len") ??
+    payloadNumber(event, "response_len")
+  );
+}
+
+function hasFullContent(event: ExtensionEventItem): boolean {
+  return Boolean(
+    payloadString(event, "prompt_text") ||
+      payloadString(event, "response_text") ||
+      payloadString(event, "user_justification")
+  );
+}
+
+function DetailRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value?: string | number | null;
+  mono?: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-secondary/10 bg-slate/5 px-3 py-2">
+      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">{label}</p>
+      <p className={`mt-1 break-all text-xs text-ink ${mono ? "font-mono" : ""}`}>
+        {value ?? "-"}
+      </p>
+    </div>
+  );
+}
+
+function ContentBlock({ label, value }: { label: string; value?: string }) {
+  if (!value) {
+    return null;
+  }
+  return (
+    <div className="space-y-2">
+      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">{label}</p>
+      <pre className="max-h-48 overflow-auto rounded-2xl border border-secondary/10 bg-white p-3 text-xs leading-5 text-ink">
+        {value}
+      </pre>
+    </div>
+  );
+}
+
 export default function ExtensionMonitoringPage() {
   const { tenantId } = useConsole();
   const [events, setEvents] = useState<ExtensionEventItem[]>([]);
@@ -42,6 +120,7 @@ export default function ExtensionMonitoringPage() {
   const [decisionFilter, setDecisionFilter] = useState<string>("all");
   const [chainFilter, setChainFilter] = useState<string>("all");
   const [userFilter, setUserFilter] = useState<string>("");
+  const [selectedEvent, setSelectedEvent] = useState<ExtensionEventItem | null>(null);
 
   const refresh = async () => {
     if (!tenantId) {
@@ -100,6 +179,29 @@ export default function ExtensionMonitoringPage() {
     });
   }, [events, userFilter]);
 
+  useEffect(() => {
+    if (!selectedEvent) {
+      return;
+    }
+    const stillVisible = filteredEvents.some((event) => event.id === selectedEvent.id);
+    if (!stillVisible) {
+      setSelectedEvent(null);
+    }
+  }, [filteredEvents, selectedEvent]);
+
+  useEffect(() => {
+    if (!selectedEvent) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedEvent(null);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [selectedEvent]);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -107,16 +209,13 @@ export default function ExtensionMonitoringPage() {
           <p className="text-xs uppercase tracking-[0.3em] text-secondary/70">Organization</p>
           <h2 className="font-display text-3xl text-ink">Extension Monitoring</h2>
           <p className="text-sm text-slate">
-            Browser-level AI usage telemetry from the UMAI extension.
+            Browser-level AI usage telemetry from forced UMAI extension deployment.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            href="/extension/connect"
-            className="inline-flex items-center gap-2 rounded-full border border-secondary/20 bg-secondary px-4 py-2 text-xs font-semibold text-white shadow-accent"
-          >
-            Connect Extension
-          </Link>
+          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700">
+            Managed extension enforced
+          </span>
           <button
             type="button"
             onClick={() => void refresh()}
@@ -221,20 +320,21 @@ export default function ExtensionMonitoringPage() {
                 <th className="px-3 py-2">User</th>
                 <th className="px-3 py-2">Device</th>
                 <th className="px-3 py-2">Chain</th>
-                <th className="px-3 py-2">Hash</th>
+                <th className="px-3 py-2">Transaction</th>
                 <th className="px-3 py-2">Message</th>
+                <th className="px-3 py-2">Details</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td className="px-3 py-6 text-slate" colSpan={9}>
+                  <td className="px-3 py-6 text-slate" colSpan={10}>
                     Loading...
                   </td>
                 </tr>
               ) : filteredEvents.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-6 text-slate" colSpan={9}>
+                  <td className="px-3 py-6 text-slate" colSpan={10}>
                     {userFilter.trim().length > 0
                       ? "No extension events match current user search."
                       : "No extension events found."}
@@ -273,12 +373,29 @@ export default function ExtensionMonitoringPage() {
                       {event.chain_valid ? (
                         <span className="text-emerald-600">valid</span>
                       ) : (
-                        <span className="text-red-600">{event.chain_error || "invalid"}</span>
+                      <span className="text-red-600">{event.chain_error || "invalid"}</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 font-mono text-[11px]">{shortHash(event.event_hash)}</td>
+                    <td className="px-3 py-2">
+                      <div className="space-y-1">
+                        <p className="font-mono text-[11px]">{shortHash(transactionHash(event))}</p>
+                        <p className="text-[10px] text-slate/70">
+                          {hasFullContent(event) ? "full content" : "metadata/hash only"}
+                        </p>
+                      </div>
+                    </td>
                     <td className="max-w-[260px] truncate px-3 py-2">
                       {event.message || "-"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedEvent(event)}
+                        className="inline-flex items-center gap-1 rounded-full border border-secondary/15 bg-white px-3 py-1 text-[11px] font-semibold text-secondary transition hover:bg-secondary/5"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        View
+                      </button>
                     </td>
                   </tr>
                 ))
@@ -287,6 +404,120 @@ export default function ExtensionMonitoringPage() {
           </table>
         </div>
       </section>
+
+      {selectedEvent ? (
+        <div className="fixed inset-0 z-[100] flex justify-end bg-black/35 backdrop-blur-sm">
+          <button
+            type="button"
+            aria-label="Close transaction details overlay"
+            className="absolute inset-0 cursor-default"
+            onClick={() => setSelectedEvent(null)}
+          />
+          <aside
+            className="relative z-10 h-full w-full max-w-[980px] overflow-y-auto border-l border-secondary/10 bg-white p-5 shadow-2xl"
+            aria-label="Transaction details"
+          >
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.3em] text-secondary/70">
+                Transaction Details
+              </p>
+              <h3 className="mt-1 font-display text-2xl text-ink">
+                {selectedEvent.event_type} on {selectedEvent.site}
+              </h3>
+              <p className="mt-1 text-sm text-slate">
+                Event-chain hashes prove integrity. Prompt/response hashes are one-way
+                fingerprints; the original value is only visible when full-content capture was
+                enabled before the event was recorded.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedEvent(null)}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-secondary/15 text-slate transition hover:bg-secondary/5"
+              aria-label="Close transaction details"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <DetailRow label="Event ID" value={selectedEvent.event_id} mono />
+            <DetailRow label="Captured" value={new Date(selectedEvent.captured_at).toLocaleString()} />
+            <DetailRow label="User" value={userLabel(selectedEvent)} />
+            <DetailRow label="Device" value={selectedEvent.device_id} mono />
+            <DetailRow label="URL" value={selectedEvent.url} mono />
+            <DetailRow label="Decision" value={selectedEvent.decision || "-"} />
+            <DetailRow label="Transaction hash" value={transactionHash(selectedEvent)} mono />
+            <DetailRow label="Event-chain hash" value={selectedEvent.event_hash} mono />
+            <DetailRow label="Previous chain hash" value={selectedEvent.prev_event_hash} mono />
+            <DetailRow label="Prompt length" value={promptLength(selectedEvent)} />
+            <DetailRow label="Response length" value={responseLength(selectedEvent)} />
+            <DetailRow
+              label="Capture"
+              value={hasFullContent(selectedEvent) ? "full_content" : "metadata_only"}
+            />
+          </div>
+
+          <div className="mt-5 grid gap-5 lg:grid-cols-2">
+            <div className="space-y-4">
+              <ContentBlock label="Prompt Text" value={payloadString(selectedEvent, "prompt_text")} />
+              <ContentBlock
+                label="Response Text"
+                value={payloadString(selectedEvent, "response_text")}
+              />
+              <ContentBlock
+                label="User Justification"
+                value={payloadString(selectedEvent, "user_justification")}
+              />
+
+              {!hasFullContent(selectedEvent) ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <p className="font-semibold">Original content is not stored for this event.</p>
+                  <p className="mt-1">
+                    This event was captured in metadata-only mode. The hash cannot be decoded or
+                    reversed; it can only be compared against the same original text hashed again.
+                    Use full-content capture only if the deployment policy allows storing prompts
+                    and responses.
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <DetailRow
+                  label="Prompt text hash"
+                  value={selectedEvent.prompt_hash || payloadString(selectedEvent, "prompt_text_hash")}
+                  mono
+                />
+                <DetailRow
+                  label="Response text hash"
+                  value={
+                    selectedEvent.response_hash ||
+                    payloadString(selectedEvent, "response_text_hash")
+                  }
+                  mono
+                />
+                <DetailRow
+                  label="Justification hash"
+                  value={payloadString(selectedEvent, "user_justification_hash")}
+                  mono
+                />
+                <DetailRow label="Message" value={selectedEvent.message || "-"} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">
+                Raw Payload JSON
+              </p>
+              <pre className="max-h-[520px] overflow-auto rounded-2xl border border-secondary/10 bg-slate/5 p-3 text-xs leading-5 text-ink">
+                {JSON.stringify(selectedEvent.payload, null, 2)}
+              </pre>
+            </div>
+          </div>
+          </aside>
+        </div>
+      ) : null}
 
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">

@@ -5,16 +5,14 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ec66ecda-8653-4d97-a005-17e4b0723b93" name="Changes" comment="Initial">
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/evaluation/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/evaluation/page.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/guardrails/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/guardrails/page.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/implementation/[guide]/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/implementation/[guide]/page.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/RENAME-IMPACT-SERVICE.md" beforeDir="false" afterPath="$PROJECT_DIR$/RENAME-IMPACT-SERVICE.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/customer/all-in-one-vm/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/customer/all-in-one-vm/.env.example" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/customer/all-in-one-vm/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/customer/all-in-one-vm/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/customer/all-in-one-vm/docker-compose.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/customer/all-in-one-vm/docker-compose.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/deploy/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/deploy/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/public/assets/duvarailogo.png" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/implementation/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/implementation/page.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/page.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/policies/policy-drafts.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/policies/policy-drafts.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/test/page.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/src/app/(console)/environments/[envId]/projects/[projectId]/test/page.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lib/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/api.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lib/implementation-guides.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/implementation-guides.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/lib/proxy.ts" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib/proxy.ts" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -89,6 +87,7 @@
       <workItem from="1776172038348" duration="2804000" />
       <workItem from="1776238813592" duration="3817000" />
       <workItem from="1776758528724" duration="7579000" />
+      <workItem from="1776870790702" duration="14000" />
     </task>
     <servers />
   </component>
