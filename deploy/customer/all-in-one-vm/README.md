@@ -89,8 +89,10 @@ Update `.env` for your VM:
 - Set `UMAI_ENGINE_IMAGE`, `UMAI_SERVICE_IMAGE`, and `UMAI_CONTROLCENTER_IMAGE`
 - Set `UMAI_CORS_ALLOW_ORIGINS=["http://umai-console.test:3000"]`
 - Set the `UMAI_DEFAULT_GUARDRAIL_LLM_*` values to the reachable LLM endpoint the engine should call
+- Set `LLM_API_KEY` or the secret named by `UMAI_DEFAULT_GUARDRAIL_LLM_AUTH_SECRET_ENV`
 - Keep `CONTROL_CENTER_ORGANIZATION_ID` and `UMAI_SEED_TENANT_ID` identical
 - Keep `CONTROL_CENTER_ORGANIZATION_NAME` and `UMAI_SEED_TENANT_NAME` aligned
+- Keep `CONTROL_CENTER_DEFAULT_ENVIRONMENT_ID` and `CONTROL_CENTER_DEFAULT_PROJECT_ID` aligned with the seeded `UMAI_SEED_ENVIRONMENT_ID` and `UMAI_SEED_PROJECT_ID`
 - If you change `UMAI_DATABASE_URL`, keep it aligned with [bootstrap/oracle/01-umai-bootstrap.sql](./bootstrap/oracle/01-umai-bootstrap.sql)
 - If you change `LDAP_DOMAIN` or `LDAP_BASE_DN`, update [bootstrap/ldap/01-users.ldif](./bootstrap/ldap/01-users.ldif)
 
@@ -150,9 +152,9 @@ Functional check:
 
 1. Open `http://umai-console.test:3000/login`.
 2. Sign in as `operator` with password `operator123`.
-3. Complete onboarding or create the target environment and project.
-4. Deploy a built-in guardrail template.
-5. Publish a version and confirm the publish succeeds.
+3. Confirm the `prod` / `poc` project exists.
+4. Confirm `Turkiye Regulated Telecom Sovereign Shield` is deployed.
+5. Confirm version 1 is published as `gr-tr-regulated-telecom-sovereign-shield`.
 6. Call `http://umai-api.test:8080/healthz`.
 7. Run a test prompt through the platform and verify the engine evaluates it.
 
