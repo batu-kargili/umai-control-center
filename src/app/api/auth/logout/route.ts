@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { clearSessionCookie } from "src/lib/auth-session";
+import { buildControlCenterUrl } from "src/lib/control-center-origin";
 
 function sanitizeReturnTo(value: string | null): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) {
@@ -12,7 +13,7 @@ function sanitizeReturnTo(value: string | null): string {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const response = NextResponse.redirect(
-    new URL(sanitizeReturnTo(url.searchParams.get("returnTo")), url)
+    buildControlCenterUrl(req, sanitizeReturnTo(url.searchParams.get("returnTo")))
   );
   clearSessionCookie(response);
   return response;
