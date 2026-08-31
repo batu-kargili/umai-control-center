@@ -1770,3 +1770,392 @@ export async function subscribeFree(payload: {
     if (!res.ok) throw new Error("Failed to subscribe to free plan");
     return res.json();
 }
+
+// ── Finding queue (UMA-57) ──────────────────────────────────────────────────
+//
+// Mirrors `umai-service/app/api/findings.py`. The vocabularies below are the
+// closed sets frozen in `docs/contracts/finding-and-worker-result-schema.md`;
+// widening one here without widening it there produces a filter that silently
+// matches nothing.
+
+export const FINDING_STATUSES = [
+    "open",
+    "investigating",
+    "resolved",
+    "false_positive",
+    "accepted_risk",
+] as const;
+export type FindingStatus = (typeof FINDING_STATUSES)[number];
+
+export const FINDING_SEVERITIES = ["critical", "high", "medium", "low"] as const;
+export type FindingSeverity = (typeof FINDING_SEVERITIES)[number];
+
+export const FINDING_CATEGORIES = [
+    "data_exposure",
+    "credential_exposure",
+    "prompt_injection",
+    "unsafe_tool_use",
+    "policy_evasion",
+    "shadow_ai",
+    "agent_misbehavior",
+    "other",
+] as const;
+export type FindingCategory = (typeof FINDING_CATEGORIES)[number];
+
+export const FINDING_SOURCES = ["adr", "extension", "sdk", "red_team", "policy"] as const;
+export type FindingSource = (typeof FINDING_SOURCES)[number];
+
+// Which moves the API will accept from a given status, and which of them need
+// a note. Kept in step with `core/finding_schema.py`. The server enforces it;
+// this only stops the UI from offering a button that is going to be refused.
+export const FINDING_TRANSITIONS: Record<FindingStatus, FindingStatus[]> = {
+    open: ["investigating", "false_positive", "accepted_risk"],
+    investigating: ["resolved", "false_positive", "accepted_risk"],
+    resolved: ["open"],
+    false_positive: ["open"],
+    accepted_risk: ["open"],
+};
+
+const TERMINAL_STATUSES: FindingStatus[] = ["resolved", "false_positive", "accepted_risk"];
+const STATUSES_REQUIRING_NOTE: FindingStatus[] = ["false_positive", "accepted_risk"];
+
+export function transitionRequiresNote(from: FindingStatus, to: FindingStatus): boolean {
+    return STATUSES_REQUIRING_NOTE.includes(to) || TERMINAL_STATUSES.includes(from);
+}
+
+export interface FindingSummary {
+    finding_key: string;
+    session_key: string;
+    rule_id: string;
+    title: string;
+    severity: FindingSeverity;
+    category: FindingCategory;
+    status: FindingStatus;
+    source: FindingSource;
+    detector: string;
+    technique_id?: string | null;
+    technique_name?: string | null;
+    tactic?: string | null;
+    actor_user?: string | null;
+    actor_device_id?: string | null;
+    project_path?: string | null;
+    assignee?: string | null;
+    observed_at?: string | null;
+    detected_at?: string | null;
+    emitted_at?: string | null;
+}
+
+export interface FindingStatusEvent {
+    from_status?: string | null;
+    to_status: string;
+    actor: string;
+    note?: string | null;
+    occurred_at: string;
+}
+
+export interface FindingSessionContext {
+    source: string;
+    source_session_id: string;
+    model?: string | null;
+    message_count: number;
+    tool_call_count: number;
+    analysis_status: string;
+    verdict?: string | null;
+    confidence?: number | null;
+    observed_at: string;
+}
+
+export interface FindingDeliveryStatus {
+    status: string;
+    attempts: number;
+    last_error?: string | null;
+    next_attempt_at?: string | null;
+    delivered_at?: string | null;
+    replayed_at?: string | null;
+    replayed_by?: string | null;
+}
+
+export interface FindingDetail extends FindingSummary {
+    summary?: string | null;
+    evidence?: Record<string, unknown> | null;
+    remediation?: Record<string, unknown> | null;
+    history: FindingStatusEvent[];
+    session?: FindingSessionContext | null;
+    delivery?: FindingDeliveryStatus | null;
+}
+
+export interface FindingPage {
+    items: FindingSummary[];
+    total: number;
+    limit: number;
+    offset: number;
+}
+
+export interface FindingFilters {
+    status?: string;
+    severity?: string;
+    category?: string;
+    source?: string;
+    detector?: string;
+    actor_user?: string;
+    actor_device_id?: string;
+    session_key?: string;
+    assignee?: string;
+    detected_after?: string;
+    detected_before?: string;
+    limit?: number;
+    offset?: number;
+}
+
+function toQuery(params: object): string {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+        if (value === undefined || value === null || value === "") continue;
+        query.set(key, String(value));
+    }
+    const rendered = query.toString();
+    return rendered ? `?${rendered}` : "";
+}
+
+export async function fetchFindings(
+    tenantId: string,
+    filters: FindingFilters = {}
+): Promise<FindingPage> {
+    const res = await fetch(`${API_BASE}/findings${toQuery(filters)}`, {
+        headers: adminTenantHeaders(tenantId),
+    });
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to load findings"));
+    }
+    return res.json();
+}
+
+export async function fetchFinding(
+    tenantId: string,
+    findingKey: string
+): Promise<FindingDetail> {
+    const res = await fetch(
+        `${API_BASE}/findings/${encodeURIComponent(findingKey)}`,
+        { headers: adminTenantHeaders(tenantId) }
+    );
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to load finding"));
+    }
+    return res.json();
+}
+
+export async function transitionFinding(
+    tenantId: string,
+    findingKey: string,
+    toStatus: FindingStatus,
+    note?: string
+): Promise<FindingDetail> {
+    const res = await fetch(
+        `${API_BASE}/findings/${encodeURIComponent(findingKey)}/status`,
+        {
+            method: "POST",
+            headers: adminJsonHeaders(tenantId),
+            body: JSON.stringify({ to_status: toStatus, note: note || null }),
+        }
+    );
+    if (!res.ok) {
+        // The server explains why a transition was refused — a missing note, a
+        // move the lifecycle does not allow. Surfacing its message beats a
+        // generic failure the analyst cannot act on.
+        throw new Error(await readApiErrorMessage(res, "Failed to update the finding"));
+    }
+    return res.json();
+}
+
+export async function assignFinding(
+    tenantId: string,
+    findingKey: string,
+    assignee: string | null
+): Promise<FindingDetail> {
+    const res = await fetch(
+        `${API_BASE}/findings/${encodeURIComponent(findingKey)}/assignee`,
+        {
+            method: "POST",
+            headers: adminJsonHeaders(tenantId),
+            body: JSON.stringify({ assignee }),
+        }
+    );
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to assign the finding"));
+    }
+    return res.json();
+}
+
+export interface SiemDeliveryStats {
+    pending: number;
+    delivered: number;
+    dead_letter: number;
+    oldest_pending_age_seconds?: number | null;
+}
+
+export async function fetchSiemDeliveryStats(
+    tenantId: string
+): Promise<SiemDeliveryStats> {
+    const res = await fetch(`${API_BASE}/siem-delivery/stats`, {
+        headers: adminTenantHeaders(tenantId),
+    });
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to load delivery status"));
+    }
+    return res.json();
+}
+
+export async function replayFindingDelivery(
+    tenantId: string,
+    findingKey: string
+): Promise<{ replayed: boolean }> {
+    const res = await fetch(
+        `${API_BASE}/findings/${encodeURIComponent(findingKey)}/replay-delivery`,
+        { method: "POST", headers: adminJsonHeaders(tenantId) }
+    );
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to replay the delivery"));
+    }
+    return res.json();
+}
+
+// ── Sessions and transcripts (UMA-58) ───────────────────────────────────────
+
+export const COLLECTION_MODES = ["posture_only", "metadata", "full_session"] as const;
+export type CollectionMode = (typeof COLLECTION_MODES)[number];
+
+export interface AgentSessionSummary {
+    session_key: string;
+    source: string;
+    source_session_id: string;
+    actor_user?: string | null;
+    actor_device_id?: string | null;
+    hostname?: string | null;
+    model?: string | null;
+    project_path?: string | null;
+    title?: string | null;
+    message_count: number;
+    tool_call_count: number;
+    analysis_status: string;
+    verdict?: string | null;
+    confidence?: number | null;
+    threat_tactic?: string | null;
+    observed_at: string;
+    ingested_at?: string | null;
+    collector_name?: string | null;
+    collector_version?: string | null;
+    finding_count: number;
+}
+
+export interface AgentSessionDetail extends AgentSessionSummary {
+    posture?: Record<string, unknown> | null;
+    transcript_available: boolean;
+    transcript_bytes?: number | null;
+    collection_mode: CollectionMode;
+}
+
+export interface AgentSessionPage {
+    items: AgentSessionSummary[];
+    total: number;
+    limit: number;
+    offset: number;
+}
+
+export interface TranscriptResponse {
+    session_key: string;
+    collection_mode: CollectionMode;
+    transcript: Record<string, unknown>;
+}
+
+export interface SessionFilters {
+    source?: string;
+    actor_user?: string;
+    actor_device_id?: string;
+    analysis_status?: string;
+    verdict?: string;
+    observed_after?: string;
+    observed_before?: string;
+    limit?: number;
+    offset?: number;
+}
+
+export async function fetchAgentSessions(
+    tenantId: string,
+    filters: SessionFilters = {}
+): Promise<AgentSessionPage> {
+    const res = await fetch(`${API_BASE}/sessions${toQuery(filters)}`, {
+        headers: adminTenantHeaders(tenantId),
+    });
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to load sessions"));
+    }
+    return res.json();
+}
+
+export async function fetchAgentSession(
+    tenantId: string,
+    sessionKey: string
+): Promise<AgentSessionDetail> {
+    const res = await fetch(
+        `${API_BASE}/sessions/${encodeURIComponent(sessionKey)}`,
+        { headers: adminTenantHeaders(tenantId) }
+    );
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to load the session"));
+    }
+    return res.json();
+}
+
+/** The distinct reasons a transcript is not shown, so the UI can say which. */
+export type TranscriptUnavailableReason = "not_collected" | "expired" | "unreadable";
+
+export class TranscriptUnavailable extends Error {
+    reason: TranscriptUnavailableReason;
+
+    constructor(reason: TranscriptUnavailableReason, message: string) {
+        super(message);
+        this.name = "TranscriptUnavailable";
+        this.reason = reason;
+    }
+}
+
+export async function fetchTranscript(
+    tenantId: string,
+    sessionKey: string
+): Promise<TranscriptResponse> {
+    const res = await fetch(
+        `${API_BASE}/sessions/${encodeURIComponent(sessionKey)}/transcript`,
+        { headers: adminTenantHeaders(tenantId) }
+    );
+    if (res.ok) return res.json();
+
+    // These three are different facts and an analyst chasing missing evidence
+    // needs to know which one they are looking at: the tenant never collected
+    // it, retention removed it, or the deployment cannot decrypt it.
+    const message = await readApiErrorMessage(res, "Failed to load the transcript");
+    if (res.status === 409) throw new TranscriptUnavailable("not_collected", message);
+    if (res.status === 410) throw new TranscriptUnavailable("expired", message);
+    if (res.status === 500 && /decrypt|encrypted/i.test(message)) {
+        throw new TranscriptUnavailable("unreadable", message);
+    }
+    throw new Error(message);
+}
+
+export async function deleteTranscript(
+    tenantId: string,
+    sessionKey: string,
+    reason: string
+): Promise<{ session_key: string; deleted: boolean }> {
+    const res = await fetch(
+        `${API_BASE}/sessions/${encodeURIComponent(sessionKey)}/transcript`,
+        {
+            method: "DELETE",
+            headers: adminJsonHeaders(tenantId),
+            body: JSON.stringify({ reason }),
+        }
+    );
+    if (!res.ok) {
+        throw new Error(await readApiErrorMessage(res, "Failed to delete the transcript"));
+    }
+    return res.json();
+}

@@ -32,7 +32,9 @@ import {
   Bot,
   Laptop,
   LayoutGrid,
-  ScanSearch
+  ScanSearch,
+  ShieldAlert,
+  History
 } from "lucide-react";
 
 function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding" }) {
@@ -227,6 +229,8 @@ function NavRail() {
     { label: "Endpoint Sensor", href: "/endpoint-sensor", icon: Laptop },
     { label: "Applications", href: "/applications", icon: LayoutGrid },
     { label: "Shadow AI", href: "/shadow-ai", icon: ScanSearch },
+    { label: "Findings", href: "/findings", icon: ShieldAlert },
+    { label: "Sessions", href: "/sessions", icon: History },
   ];
 
   return (
