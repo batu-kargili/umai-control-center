@@ -10,6 +10,7 @@ import {
   fetchExtensionEvents,
   fetchExtensionSummary,
 } from "src/lib/api";
+import ExtensionGuardrailControl from "./extension-guardrail-control";
 
 function shortHash(value?: string | null): string {
   if (!value) return "-";
@@ -111,7 +112,7 @@ function ContentBlock({ label, value }: { label: string; value?: string }) {
 }
 
 export default function ExtensionMonitoringPage() {
-  const { tenantId } = useConsole();
+  const { tenant, tenantId } = useConsole();
   const [events, setEvents] = useState<ExtensionEventItem[]>([]);
   const [summary, setSummary] = useState<ExtensionSummary | null>(null);
   const [loading, setLoading] = useState(false);
@@ -266,6 +267,12 @@ export default function ExtensionMonitoringPage() {
           </p>
         </div>
       </section>
+
+      <ExtensionGuardrailControl
+        tenantId={tenantId}
+        environmentId={tenant?.environment_id ?? null}
+        projectId={tenant?.project_id ?? null}
+      />
 
       <section className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
         <div className="mb-4 flex flex-wrap items-center gap-2">

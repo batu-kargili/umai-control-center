@@ -18,9 +18,11 @@ import {
 import {
   createPolicy,
   deployPolicyTemplate,
+  draftPolicy,
   fetchPolicies,
   fetchPolicyLibrary,
   Policy,
+  PolicyDraftResponse,
   PolicyLibraryItem,
   PolicyPhase,
   PolicyScope,
@@ -58,6 +60,7 @@ export default function PoliciesPage() {
   const [builderNotice, setBuilderNotice] = useState<string | null>(null);
   const [deployingTemplate, setDeployingTemplate] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   const [activeTab, setActiveTab] = useState<PolicyTab>("create");
   const [creationStage, setCreationStage] = useState<CreationStage>("compose");
@@ -196,22 +199,56 @@ export default function PoliciesPage() {
     });
   };
 
-  const handleGenerateDraft = () => {
+  const applyDraft = (draft: PolicyDraft) => {
+    setReviewDraft(draft);
+    setNameOverride(draft.name);
+    setIdOverride(ensureUniquePolicyId(draft.policyId, deployedPolicyIds));
+    setIdManuallyEdited(false);
+    setScopeOverride(draft.scope);
+    setEnabledOverride(draft.enabled);
+    setPhaseOverride(draft.phases);
+    setAdvancedOpen(false);
+    setCreationStage("review");
+  };
+
+  const handleGenerateDraft = async () => {
     setBuilderError(null);
     setBuilderNotice(null);
-    if (!composerDraft) {
+    if (!intent.trim() && blockedExamples.length === 0 && allowedExamples.length === 0) {
       setBuilderError("Describe the rule or provide examples first.");
       return;
     }
-    setReviewDraft(composerDraft);
-    setNameOverride(composerDraft.name);
-    setIdOverride(ensureUniquePolicyId(composerDraft.policyId, deployedPolicyIds));
-    setIdManuallyEdited(false);
-    setScopeOverride(composerDraft.scope);
-    setEnabledOverride(composerDraft.enabled);
-    setPhaseOverride(composerDraft.phases);
-    setAdvancedOpen(false);
-    setCreationStage("review");
+    if (!tenantId) {
+      setBuilderError("Tenant is not available.");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const server = await draftPolicy({
+        tenant_id: tenantId,
+        environment_id: envId,
+        project_id: projectId,
+        intent: intent.trim(),
+        tailoring: tailoring.trim(),
+        blocked_examples: blockedExamples,
+        allowed_examples: allowedExamples,
+      });
+      applyDraft(mapServerDraft(server));
+    } catch (err) {
+      console.error(err);
+      if (composerDraft) {
+        applyDraft(composerDraft);
+        setBuilderNotice(
+          "AI taslağı üretilemedi; yerel taslak kullanıldı. Servis tarafında OPENAI_API_KEY ayarını kontrol edin."
+        );
+      } else {
+        setBuilderError(
+          err instanceof Error ? err.message : "Draft generation failed. Try again."
+        );
+      }
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const handleTogglePhase = (phase: PolicyPhase) => {
@@ -497,14 +534,16 @@ export default function PoliciesPage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                   <button
                     type="button"
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0b1322]"
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0b1322] disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={generating}
                     onClick={handleGenerateDraft}
                   >
-                    Generate draft
-                    <ArrowRight className="h-4 w-4" />
+                    {generating ? "Drafting with AI..." : "Generate draft"}
+                    {!generating && <ArrowRight className="h-4 w-4" />}
                   </button>
                   <p className="text-xs text-slate">
-                    The first draft is private. Nothing is created until you confirm it.
+                    UMAI drafts a deep safeguard-format policy from your description.
+                    Nothing is created until you confirm it.
                   </p>
                 </div>
               </div>
@@ -1091,6 +1130,25 @@ function ExistingPoliciesSection(props: { loading: boolean; policies: Policy[] }
       )}
     </section>
   );
+}
+
+function mapServerDraft(r: PolicyDraftResponse): PolicyDraft {
+  return {
+    name: r.name,
+    policyId: r.policy_id,
+    type: r.type,
+    phases: r.phases,
+    scope: "PROJECT",
+    enabled: true,
+    summary: r.summary,
+    sourceLabel: r.source_label,
+    rationale: r.rationale,
+    config: r.config as Record<string, unknown>,
+    previewExamples: r.preview_examples.map((p) => ({
+      text: p.text,
+      decision: p.decision,
+    })),
+  };
 }
 
 function ensureUniquePolicyId(baseId: string, existingIds: Set<string>): string {

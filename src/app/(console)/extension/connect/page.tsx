@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, Loader2, Shield, XCircle } from "lucide-react";
 import { useConsole } from "src/app/(console)/console-context";
+import { fetchGuardrails, type Guardrail } from "src/lib/api";
 
 type ConnectStatus = "preparing" | "connecting" | "connected" | "error";
 
@@ -20,12 +21,17 @@ interface ExtensionResponse {
   issues?: string[];
 }
 
-const DEFAULT_TENANT_ID = "72c1e7a6-cd8b-4e69-b0a4-1549582a98f8";
 const DEFAULT_EXTENSION_ID = "cpcepfngmlphbdmfpnkhlbhhiijeppcn";
-const DEFAULT_ENVIRONMENT_ID = "prod";
-const DEFAULT_PROJECT_ID = "poc";
-const DEFAULT_GUARDRAIL_ID = "gr-tr-regulated-telecom-sovereign-shield";
-const DEFAULT_GUARDRAIL_VERSION = "5";
+
+interface ResolvedConnectConfig {
+  extensionId: string;
+  tenantId: string;
+  environmentId: string;
+  projectId: string;
+  guardrailId: string;
+  guardrailVersion: string;
+  extensionConfigBase: Record<string, unknown>;
+}
 
 function cleanOrigin(value: string): string {
   return value.replace(/\/+$/, "");
@@ -41,6 +47,37 @@ function extensionIdFromSearch(): string {
     process.env.NEXT_PUBLIC_UMAI_EXTENSION_ID?.trim() ||
     DEFAULT_EXTENSION_ID
   );
+}
+
+function selectGuardrail(guardrails: Guardrail[], requestedGuardrailId: string | null): Guardrail {
+  if (requestedGuardrailId) {
+    const matched = guardrails.find((guardrail) => guardrail.guardrail_id === requestedGuardrailId);
+    if (!matched) {
+      throw new Error(`Guardrail ${requestedGuardrailId} was not found in the selected project.`);
+    }
+    return matched;
+  }
+
+  const currentGuardrail = guardrails.find((guardrail) => guardrail.current_version > 0);
+  if (!currentGuardrail) {
+    throw new Error("No published guardrail is available in the selected project.");
+  }
+  return currentGuardrail;
+}
+
+function resolveGuardrailVersion(guardrail: Guardrail, requestedVersion: string | null): string {
+  if (requestedVersion) {
+    const version = Number.parseInt(requestedVersion, 10);
+    if (!Number.isInteger(version) || version <= 0 || String(version) !== requestedVersion) {
+      throw new Error("Guardrail version must be a positive integer.");
+    }
+    return String(version);
+  }
+
+  if (!Number.isInteger(guardrail.current_version) || guardrail.current_version <= 0) {
+    throw new Error(`Guardrail ${guardrail.guardrail_id} does not have a published version.`);
+  }
+  return String(guardrail.current_version);
 }
 
 function sendExternalMessage(
@@ -84,65 +121,123 @@ declare global {
 }
 
 export default function ExtensionConnectPage() {
-  const { tenant, tenantId } = useConsole();
+  const { tenant, tenantId, tenantReady } = useConsole();
   const [status, setStatus] = useState<ConnectStatus>("preparing");
   const [message, setMessage] = useState("Preparing extension enrollment.");
+  const [config, setConfig] = useState<ResolvedConnectConfig | null>(null);
 
-  const config = useMemo(() => {
+  const urlConfig = useMemo(() => {
     if (typeof window === "undefined") {
       return null;
     }
 
     const origin = cleanOrigin(window.location.origin);
     const params = new URLSearchParams(window.location.search);
-    const environmentId =
-      params.get("environmentId")?.trim() || tenant?.environment_id || DEFAULT_ENVIRONMENT_ID;
-    const projectId = params.get("projectId")?.trim() || tenant?.project_id || DEFAULT_PROJECT_ID;
-    const guardrailId = params.get("guardrailId")?.trim() || DEFAULT_GUARDRAIL_ID;
-    const guardrailVersion = params.get("version")?.trim() || DEFAULT_GUARDRAIL_VERSION;
-    const effectiveTenantId = tenantId || tenant?.tenant_id || DEFAULT_TENANT_ID;
-    const query = new URLSearchParams({
-      environment_id: environmentId,
-      project_id: projectId,
-      guardrail_id: guardrailId,
-      version: guardrailVersion,
-    }).toString();
 
     return {
       extensionId: extensionIdFromSearch(),
-      tenantId: effectiveTenantId,
-      environmentId,
-      projectId,
-      guardrailId,
-      guardrailVersion,
-      extensionConfigBase: {
-        tenantId: effectiveTenantId,
-        environment: "prod",
-        ingestBaseUrl: `${origin}/api/public`,
-        eventsUrl: `${origin}/api/public/ext/events`,
-        policyUrl: `${origin}/api/public/ext/policy?${query}`,
-        evaluateUrl: `${origin}/api/public/ext/evaluate?${query}`,
-        evaluationMode: "server",
-        controlCenterUrl: origin,
-        captureMode: "full_content",
-        retentionLocalDays: 7,
-        debug: false,
-        allowedDomains: ["chatgpt.com", "chat.openai.com", "gemini.google.com", "claude.ai"],
-        browserSecurity: {
-          enabled: true,
-          mode: "enforce",
-          shadowAiDomains: [
-            "copilot.microsoft.com",
-            "perplexity.ai",
-            "poe.com",
-            "chat.deepseek.com",
-            "meta.ai",
-            "grok.com",
-          ],
-        },
-      },
+      origin,
+      environmentId: params.get("environmentId")?.trim() || null,
+      projectId: params.get("projectId")?.trim() || null,
+      guardrailId: params.get("guardrailId")?.trim() || null,
+      version: params.get("version")?.trim() || null,
     };
-  }, [tenant, tenantId]);
+  }, []);
+
+  useEffect(() => {
+    if (!tenantReady || !urlConfig) {
+      return;
+    }
+
+    let active = true;
+
+    const resolveConfig = async () => {
+      try {
+        setStatus("preparing");
+        setMessage("Resolving the customer guardrail for extension enrollment.");
+        setConfig(null);
+
+        const effectiveTenantId = tenantId || tenant?.tenant_id;
+        if (!effectiveTenantId) {
+          throw new Error("No active UMAI tenant is available for extension enrollment.");
+        }
+
+        const environmentId = urlConfig.environmentId || tenant?.environment_id;
+        const projectId = urlConfig.projectId || tenant?.project_id;
+        if (!environmentId || !projectId) {
+          throw new Error("Create or select an environment and project before connecting the extension.");
+        }
+
+        const guardrails = await fetchGuardrails(effectiveTenantId, environmentId, projectId);
+        const selectedGuardrail = selectGuardrail(guardrails, urlConfig.guardrailId);
+        const guardrailVersion = resolveGuardrailVersion(selectedGuardrail, urlConfig.version);
+        const query = new URLSearchParams({
+          environment_id: environmentId,
+          project_id: projectId,
+          guardrail_id: selectedGuardrail.guardrail_id,
+          version: guardrailVersion,
+        }).toString();
+
+        if (!active) {
+          return;
+        }
+
+        setConfig({
+          extensionId: urlConfig.extensionId,
+          tenantId: effectiveTenantId,
+          environmentId,
+          projectId,
+          guardrailId: selectedGuardrail.guardrail_id,
+          guardrailVersion,
+          extensionConfigBase: {
+            tenantId: effectiveTenantId,
+            environment: "prod",
+            ingestBaseUrl: `${urlConfig.origin}/api/public`,
+            eventsUrl: `${urlConfig.origin}/api/public/ext/events`,
+            policyUrl: `${urlConfig.origin}/api/public/ext/policy?${query}`,
+            evaluateUrl: `${urlConfig.origin}/api/public/ext/evaluate?${query}`,
+            evaluationMode: "server",
+            controlCenterUrl: urlConfig.origin,
+            captureMode: "full_content",
+            retentionLocalDays: 7,
+            debug: false,
+            allowedDomains: ["chatgpt.com", "chat.openai.com", "gemini.google.com", "claude.ai"],
+            browserSecurity: {
+              enabled: true,
+              mode: "enforce",
+              shadowAiDomains: [
+                "copilot.microsoft.com",
+                "perplexity.ai",
+                "poe.com",
+                "chat.deepseek.com",
+                "meta.ai",
+                "grok.com",
+              ],
+            },
+          },
+        });
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setStatus("error");
+        setMessage(error instanceof Error ? error.message : "Unable to resolve extension configuration.");
+      }
+    };
+
+    void resolveConfig();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    tenant?.environment_id,
+    tenant?.project_id,
+    tenant?.tenant_id,
+    tenantId,
+    tenantReady,
+    urlConfig,
+  ]);
 
   useEffect(() => {
     if (!config) {
@@ -272,6 +367,18 @@ export default function ExtensionConnectPage() {
                 Project
               </p>
               <p className="mt-1 font-mono text-xs text-ink">{config.projectId}</p>
+            </div>
+            <div className="rounded-2xl border border-secondary/10 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">
+                Guardrail
+              </p>
+              <p className="mt-1 break-all font-mono text-xs text-ink">{config.guardrailId}</p>
+            </div>
+            <div className="rounded-2xl border border-secondary/10 p-4">
+              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">
+                Version
+              </p>
+              <p className="mt-1 font-mono text-xs text-ink">v{config.guardrailVersion}</p>
             </div>
           </div>
         ) : null}

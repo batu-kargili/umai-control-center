@@ -182,10 +182,17 @@ export function parseExamples(value: string): string[] {
     .slice(0, 8);
 }
 
+const TURKISH_TRANSLITERATION: Record<string, string> = {
+  ç: "c", ğ: "g", ı: "i", ö: "o", ş: "s", ü: "u", İ: "i",
+};
+
 export function slugify(value: string): string {
   return value
     .trim()
-    .toLowerCase()
+    .toLocaleLowerCase("tr")
+    .replace(/[çğıöşüİ]/g, (ch) => TURKISH_TRANSLITERATION[ch] ?? ch)
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
@@ -514,11 +521,13 @@ function buildPolicyId(name: string): string {
 function sentenceToTitle(value: string): string {
   const words = value
     .trim()
-    .replace(/[^A-Za-z0-9\s]+/g, " ")
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 6);
-  return words.map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
+  return words
+    .map((word) => word.charAt(0).toLocaleUpperCase("tr") + word.slice(1))
+    .join(" ");
 }
 
 function inferPhases(intent: string): PolicyPhase[] {

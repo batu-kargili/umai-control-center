@@ -171,7 +171,7 @@ export default function TestPage() {
   const [phaseFocus, setPhaseFocus] = useState<PhaseFocus>("LAST_USER_MESSAGE");
   const [contentType, setContentType] = useState<ContentType>("text");
   const [language, setLanguage] = useState("");
-  const [timeoutMs, setTimeoutMs] = useState("1500");
+  const [timeoutMs, setTimeoutMs] = useState("4500");
   const [allowLlmCalls, setAllowLlmCalls] = useState(true);
 
   const [messages, setMessages] = useState<ChatMessage[]>([createMessage()]);
@@ -591,7 +591,7 @@ export default function TestPage() {
                     className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
                     value={timeoutMs}
                     onChange={(event) => setTimeoutMs(event.target.value)}
-                    placeholder="1500"
+                    placeholder="4500"
                   />
                 </div>
               </div>

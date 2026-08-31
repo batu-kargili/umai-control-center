@@ -311,6 +311,14 @@ export interface AuditEventItem {
     event_signature?: string | null;
     hash_key_id?: string | null;
     created_at: string;
+    action_resource?: {
+        source?: string | null;
+        process_name?: string | null;
+        destination_host?: string | null;
+        destination_sni?: string | null;
+        device_id?: string | null;
+        effective_capture_mode?: string | null;
+    } | null;
 }
 
 export interface EvidencePackItem {
@@ -373,6 +381,110 @@ export interface ExtensionSummary {
     by_event_type: Record<string, number>;
     by_decision: Record<string, number>;
     daily: ExtensionDailyCount[];
+}
+
+export interface SensorDeviceItem {
+    tenant_id: string;
+    device_id: string;
+    hostname?: string | null;
+    os?: string | null;
+    os_version?: string | null;
+    agent_version?: string | null;
+    last_heartbeat_at?: string | null;
+    last_policy_etag?: string | null;
+    last_user_email?: string | null;
+    identity_status?: string | null;
+    queue_depth?: number | null;
+    last_successful_upload_at?: string | null;
+    enrolled_at: string;
+    status: string;
+    metadata?: Record<string, unknown> | null;
+}
+
+export interface SensorEventItem {
+    tenant_id: string;
+    event_id: string;
+    event_type: string;
+    process_name?: string | null;
+    process_path?: string | null;
+    parent_process?: string | null;
+    destination_host?: string | null;
+    destination_sni?: string | null;
+    destination_port?: number | null;
+    user_email?: string | null;
+    user_idp_subject?: string | null;
+    device_id: string;
+    captured_at: string;
+    prev_event_hash?: string | null;
+    event_hash: string;
+    chain_valid: boolean;
+    chain_error?: string | null;
+    decision?: string | null;
+    message?: string | null;
+    prompt_hash?: string | null;
+    prompt_len?: number | null;
+    dlp_tags: string[];
+    file_context: Record<string, unknown>[];
+    payload: Record<string, unknown>;
+    created_at: string;
+}
+
+export interface SensorDailyCount {
+    day: string;
+    count: number;
+}
+
+export interface SensorSummary {
+    total_events: number;
+    unique_devices: number;
+    unique_users: number;
+    blocked_events: number;
+    warned_events: number;
+    redacted_events: number;
+    last_event_at?: string | null;
+    by_destination: Record<string, number>;
+    by_process: Record<string, number>;
+    by_event_type: Record<string, number>;
+    by_decision: Record<string, number>;
+    daily: SensorDailyCount[];
+}
+
+export interface SensorDownloadSessionItem {
+    id: string;
+    tenant_id: string;
+    employee_idp_subject: string;
+    employee_upn?: string | null;
+    employee_display_name?: string | null;
+    created_ip?: string | null;
+    created_at: string;
+    updated_at?: string | null;
+    expires_at?: string | null;
+    installer_version?: string | null;
+    bootstrap_token_id?: string | null;
+    bootstrap_token_expires_at?: string | null;
+    artifact_id?: string | null;
+    artifact_sha256?: string | null;
+    artifact_filename?: string | null;
+    artifact_expires_at?: string | null;
+    downloaded_at?: string | null;
+    device_id?: string | null;
+    first_heartbeat_at?: string | null;
+    last_heartbeat_at?: string | null;
+    first_event_at?: string | null;
+    identity_status?: string | null;
+    failure_reason?: string | null;
+    status: string;
+    installer_download_url?: string | null;
+}
+
+export interface SensorOnboardingDeviceItem extends SensorDownloadSessionItem {
+    hostname?: string | null;
+    os?: string | null;
+    os_version?: string | null;
+    agent_version?: string | null;
+    device_status?: string | null;
+    queue_depth?: number | null;
+    last_policy_etag?: string | null;
 }
 
 export type EvaluationStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
@@ -762,6 +874,39 @@ export async function createPolicy(payload: Omit<Policy, "created_at">): Promise
     return res.json();
 }
 
+export interface PolicyDraftResponse {
+    name: string;
+    policy_id: string;
+    type: "CONTEXT_AWARE";
+    phases: PolicyPhase[];
+    summary: string;
+    source_label: string;
+    rationale: string[];
+    config: Record<string, unknown>;
+    preview_examples: { text: string; decision: "BLOCK" | "ALLOW" }[];
+}
+
+export async function draftPolicy(payload: {
+    tenant_id: string;
+    environment_id: string;
+    project_id: string;
+    intent: string;
+    tailoring?: string;
+    blocked_examples?: string[];
+    allowed_examples?: string[];
+}): Promise<PolicyDraftResponse> {
+    const res = await fetch(`${API_BASE}/policies/draft`, {
+        method: "POST",
+        headers: adminJsonHeaders(payload.tenant_id),
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const error = await readApiErrorMessage(res, "Failed to draft policy");
+        throw new Error(error);
+    }
+    return res.json();
+}
+
 export async function updatePolicy(
     tenantId: string,
     envId: string,
@@ -1041,6 +1186,306 @@ export async function fetchExtensionSummary(
         headers: { "X-Tenant-Id": tenantId },
     });
     if (!res.ok) throw new Error("Failed to fetch extension summary");
+    return res.json();
+}
+
+export async function fetchSensorDevices(
+    tenantId: string,
+    params?: {
+        status?: string;
+        device_id?: string;
+        limit?: number;
+    }
+): Promise<SensorDeviceItem[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.device_id) query.set("device_id", params.device_id);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const res = await fetch(`${API_BASE}/sensor/devices${suffix}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to fetch sensor devices");
+    return res.json();
+}
+
+export async function fetchSensorEvents(
+    tenantId: string,
+    params?: {
+        event_type?: string;
+        decision?: string;
+        device_id?: string;
+        destination_host?: string;
+        process_name?: string;
+        chain_valid?: boolean;
+        from_ts?: string;
+        to_ts?: string;
+        limit?: number;
+    }
+): Promise<SensorEventItem[]> {
+    const query = new URLSearchParams();
+    if (params?.event_type) query.set("event_type", params.event_type);
+    if (params?.decision) query.set("decision", params.decision);
+    if (params?.device_id) query.set("device_id", params.device_id);
+    if (params?.destination_host) query.set("destination_host", params.destination_host);
+    if (params?.process_name) query.set("process_name", params.process_name);
+    if (typeof params?.chain_valid === "boolean") {
+        query.set("chain_valid", params.chain_valid ? "true" : "false");
+    }
+    if (params?.from_ts) query.set("from_ts", params.from_ts);
+    if (params?.to_ts) query.set("to_ts", params.to_ts);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const res = await fetch(`${API_BASE}/sensor/events${suffix}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to fetch sensor events");
+    return res.json();
+}
+
+export async function fetchSensorSummary(
+    tenantId: string,
+    days = 7
+): Promise<SensorSummary> {
+    const query = new URLSearchParams({ days: String(days) });
+    const res = await fetch(`${API_BASE}/sensor/summary?${query.toString()}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to fetch sensor summary");
+    return res.json();
+}
+
+export async function fetchSensorDownloadSessions(
+    tenantId: string,
+    params?: {
+        status?: string;
+        employee?: string;
+        installer_version?: string;
+        from_ts?: string;
+        to_ts?: string;
+        limit?: number;
+    }
+): Promise<SensorDownloadSessionItem[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.employee) query.set("employee", params.employee);
+    if (params?.installer_version) query.set("installer_version", params.installer_version);
+    if (params?.from_ts) query.set("from_ts", params.from_ts);
+    if (params?.to_ts) query.set("to_ts", params.to_ts);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const res = await fetch(`${API_BASE}/sensor/download-sessions${suffix}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to fetch sensor download sessions");
+    return res.json();
+}
+
+export async function fetchSensorOnboardingDevices(
+    tenantId: string,
+    params?: {
+        status?: string;
+        employee?: string;
+        installer_version?: string;
+        from_ts?: string;
+        to_ts?: string;
+        limit?: number;
+    }
+): Promise<SensorOnboardingDeviceItem[]> {
+    const query = new URLSearchParams();
+    if (params?.status) query.set("status", params.status);
+    if (params?.employee) query.set("employee", params.employee);
+    if (params?.installer_version) query.set("installer_version", params.installer_version);
+    if (params?.from_ts) query.set("from_ts", params.from_ts);
+    if (params?.to_ts) query.set("to_ts", params.to_ts);
+    if (params?.limit) query.set("limit", String(params.limit));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    const res = await fetch(`${API_BASE}/sensor/onboarding/devices${suffix}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to fetch sensor onboarding devices");
+    return res.json();
+}
+
+export type ApplicationCategory =
+    | "llm_chat"
+    | "code_assistant"
+    | "image_gen"
+    | "ai_search"
+    | "productivity"
+    | "other";
+export type ApplicationRiskLevel = "critical" | "high" | "medium" | "low" | "none";
+export type ApplicationType = "web" | "desktop" | "both";
+
+export const APPLICATION_CATEGORY_OPTIONS: ApplicationCategory[] = [
+    "llm_chat",
+    "code_assistant",
+    "image_gen",
+    "ai_search",
+    "productivity",
+    "other",
+];
+export const APPLICATION_RISK_OPTIONS: ApplicationRiskLevel[] = [
+    "critical",
+    "high",
+    "medium",
+    "low",
+    "none",
+];
+
+export interface ApplicationTrendPoint {
+    day: string;
+    sessions: number;
+}
+
+export interface ApplicationUsageItem {
+    app_id?: string | null;
+    slug: string;
+    name: string;
+    vendor?: string | null;
+    icon_key?: string | null;
+    category: ApplicationCategory;
+    risk_level: ApplicationRiskLevel;
+    is_training: boolean;
+    is_sanctioned: boolean;
+    sessions: number;
+    unique_users: number;
+    sensitive_count: number;
+    types: string[];
+    last_used_at?: string | null;
+    trend: ApplicationTrendPoint[];
+    pct_change?: number | null;
+}
+
+export interface ApplicationCategoryTotal {
+    category: ApplicationCategory;
+    sessions: number;
+    apps: number;
+}
+
+export interface ApplicationsDashboard {
+    window_days: number;
+    generated_at: string;
+    total_sessions: number;
+    total_apps: number;
+    risk_distribution: Record<ApplicationRiskLevel, number>;
+    category_totals: ApplicationCategoryTotal[];
+    apps: ApplicationUsageItem[];
+}
+
+export interface ApplicationCatalogEntry {
+    app_id: string;
+    slug: string;
+    name: string;
+    vendor?: string | null;
+    category: ApplicationCategory;
+    risk_level: ApplicationRiskLevel;
+    icon_key?: string | null;
+    domains: string[];
+    process_names: string[];
+    ports: number[];
+    app_type: ApplicationType;
+    is_sanctioned: boolean;
+    is_training: boolean;
+    sensor_capture: boolean;
+    inventory_only: boolean;
+    enabled: boolean;
+    source: "builtin" | "custom";
+    is_customized: boolean;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface ApplicationCatalogCreatePayload {
+    slug: string;
+    name: string;
+    vendor?: string;
+    category?: ApplicationCategory;
+    risk_level?: ApplicationRiskLevel;
+    icon_key?: string;
+    domains?: string[];
+    process_names?: string[];
+    ports?: number[];
+    app_type?: ApplicationType;
+    is_sanctioned?: boolean;
+    is_training?: boolean;
+    sensor_capture?: boolean;
+    inventory_only?: boolean;
+}
+
+export type ApplicationCatalogUpdatePayload = Partial<ApplicationCatalogCreatePayload> & {
+    enabled?: boolean;
+};
+
+export async function fetchApplicationsDashboard(
+    tenantId: string,
+    days = 30
+): Promise<ApplicationsDashboard> {
+    const query = new URLSearchParams({ days: String(days) });
+    const res = await fetch(`${API_BASE}/applications?${query.toString()}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to fetch applications dashboard");
+    return res.json();
+}
+
+export async function exportApplicationsCsv(tenantId: string, days = 30): Promise<string> {
+    const query = new URLSearchParams({ days: String(days) });
+    const res = await fetch(`${API_BASE}/applications/export?${query.toString()}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to export applications");
+    return res.text();
+}
+
+export async function fetchApplicationCatalog(
+    tenantId: string,
+    includeDisabled = true
+): Promise<ApplicationCatalogEntry[]> {
+    const query = new URLSearchParams({ include_disabled: String(includeDisabled) });
+    const res = await fetch(`${API_BASE}/applications/catalog?${query.toString()}`, {
+        headers: { "X-Tenant-Id": tenantId },
+    });
+    if (!res.ok) throw new Error("Failed to fetch application catalog");
+    return res.json();
+}
+
+export async function createApplicationCatalogEntry(
+    tenantId: string,
+    payload: ApplicationCatalogCreatePayload
+): Promise<ApplicationCatalogEntry> {
+    const res = await fetch(`${API_BASE}/applications/catalog`, {
+        method: "POST",
+        headers: adminJsonHeaders(tenantId),
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await readApiErrorMessage(res, "Failed to create application"));
+    return res.json();
+}
+
+export async function updateApplicationCatalogEntry(
+    tenantId: string,
+    appId: string,
+    payload: ApplicationCatalogUpdatePayload
+): Promise<ApplicationCatalogEntry> {
+    const res = await fetch(`${API_BASE}/applications/catalog/${appId}`, {
+        method: "PUT",
+        headers: adminJsonHeaders(tenantId),
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await readApiErrorMessage(res, "Failed to update application"));
+    return res.json();
+}
+
+export async function deleteApplicationCatalogEntry(
+    tenantId: string,
+    appId: string
+): Promise<{ app_id: string; status: string }> {
+    const res = await fetch(`${API_BASE}/applications/catalog/${appId}`, {
+        method: "DELETE",
+        headers: adminTenantHeaders(tenantId),
+    });
+    if (!res.ok) throw new Error(await readApiErrorMessage(res, "Failed to delete application"));
     return res.json();
 }
 
