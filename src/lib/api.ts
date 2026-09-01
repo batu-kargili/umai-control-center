@@ -1,3 +1,5 @@
+import { withRunbook } from "./runbooks";
+
 const API_BASE = "/api/admin";
 const PUBLIC_API_BASE = "/api/public";
 const MAX_AUDIT_EVENT_LIMIT = 500;
@@ -27,7 +29,12 @@ async function readApiErrorMessage(res: Response, fallback: string): Promise<str
             payload?.error?.message ||
             payload?.detail?.message ||
             payload?.message;
-        return typeof message === "string" && message.trim() ? message : fallback;
+        const code = payload?.error?.type ?? payload?.detail?.type ?? payload?.type;
+        const text = typeof message === "string" && message.trim() ? message : fallback;
+        // An operator reading "AI_ENGINE_UNREACHABLE" in a toast has the same problem as
+        // one reading a firing alert, and far less help. The alert carries a runbook_url;
+        // this is where the error gets one too.
+        return withRunbook(text, code);
     } catch {
         return fallback;
     }

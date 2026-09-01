@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "comment": "One map from a symptom to the page that tells you what to do about it. Alerts reach a runbook through runbook_url in alerts.yml; an operator staring at an error in the Control Center reaches the same page through error_codes. Two maps would drift, and the half nobody maintains is the half someone needs at 3am.",
+  "error_codes": {
+    "AI_ENGINE_UNREACHABLE": "docs/runbooks/engine-unavailable.md",
+    "AI_ENGINE_TIMEOUT": "docs/runbooks/engine-unavailable.md",
+    "REDIS_UNAVAILABLE": "docs/runbooks/storage-degraded.md",
+    "TRANSCRIPT_UNREADABLE": "docs/runbooks/transcript-store.md",
+    "TRANSCRIPT_UNAVAILABLE": "docs/runbooks/transcript-store.md",
+    "OPENAI_EMPTY_RESPONSE": "docs/runbooks/model-endpoint-degraded.md",
+    "RATE_LIMITED": "docs/runbooks/capacity-limits.md",
+    "LICENSE_EXPIRED": "docs/runbooks/licence-and-policy-freshness.md",
+    "LICENSE_INVALID": "docs/runbooks/licence-and-policy-freshness.md",
+    "LICENSE_SUSPENDED": "docs/runbooks/licence-and-policy-freshness.md",
+    "LICENSE_NOT_FOUND": "docs/runbooks/licence-and-policy-freshness.md",
+    "LICENSE_SIGNATURE_INVALID": "docs/runbooks/licence-and-policy-freshness.md",
+    "ADR_DEVICE_UNKNOWN": "docs/runbooks/collector-fleet-silent.md",
+    "ADR_DEVICE_REVOKED": "docs/runbooks/collector-fleet-silent.md",
+    "ADR_BATCH_TOO_LARGE": "docs/runbooks/collector-fleet-silent.md",
+    "ADR_BODY_TOO_LARGE": "docs/runbooks/collector-fleet-silent.md"
+  },
+  "dependencies": {
+    "siem": {
+      "name": "SIEM (QRadar)",
+      "runbook": "docs/runbooks/siem-delivery.md",
+      "degrades_to": "Findings stay queued in the outbox. Detection continues; delivery does not."
+    },
+    "model_endpoint": {
+      "name": "LLM endpoint",
+      "runbook": "docs/runbooks/model-endpoint-degraded.md",
+      "degrades_to": "Reasoning stages return the error verdict. Triage and posture rules keep working, so the platform is partially blind rather than blind."
+    },
+    "analysis_worker": {
+      "name": "ADR analysis workers",
+      "runbook": "docs/runbooks/analysis-backlog.md",
+      "degrades_to": "Sessions accumulate in the queue at ingested. Nothing is lost; everything is late."
+    },
+    "engine": {
+      "name": "umai-engine",
+      "runbook": "docs/runbooks/engine-unavailable.md",
+      "degrades_to": "Guardrail evaluation fails closed. This is the one dependency whose loss blocks rather than delays."
+    },
+    "database": {
+      "name": "Database",
+      "runbook": "docs/runbooks/storage-degraded.md",
+      "degrades_to": "Everything stops. The service reports unready and ingest is rejected rather than dropped."
+    },
+    "transcript_store": {
+      "name": "Transcript volume",
+      "runbook": "docs/runbooks/storage-degraded.md",
+      "degrades_to": "Sessions are recorded without content. Findings are still raised; their evidence is missing."
+    },
+    "redis": {
+      "name": "Redis",
+      "runbook": "docs/runbooks/storage-degraded.md",
+      "degrades_to": "Cold cache and per-process rate limiting. Nothing durable is lost, because nothing durable is kept there."
+    }
+  }
+}
