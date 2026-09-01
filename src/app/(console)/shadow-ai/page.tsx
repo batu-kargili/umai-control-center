@@ -92,7 +92,7 @@ const postureDimensions = [
 ];
 
 const coverageSources = [
-  { label: "Endpoint sensors", coverage: 94, detail: "1,207 / 1,284 devices", state: "Healthy" },
+  { label: "ADR collectors", coverage: 94, detail: "1,207 / 1,284 devices", state: "Healthy" },
   { label: "Identity resolution", coverage: 96, detail: "452 / 469 users", state: "Healthy" },
   { label: "Network & DNS", coverage: 91, detail: "12 event sources", state: "Healthy" },
   { label: "Browser extension", coverage: 82, detail: "1,053 active devices", state: "Watch" },

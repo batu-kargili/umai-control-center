@@ -194,9 +194,8 @@ function Breadcrumbs() {
     if (segment === "extension") label = "Extension";
     if (segment === "connect") label = "Monitoring";
     if (segment === "extension-monitoring") label = "Extension Monitoring";
-    if (segment === "endpoint-sensor") label = "Endpoint Sensor";
-    if (segment === "sensor") label = "Sensor";
     if (segment === "applications") label = "Applications";
+    if (segment === "collectors") label = "Collectors";
 
     crumbs.push({ label, href: currentPath });
   });
@@ -226,11 +225,11 @@ function NavRail() {
     { label: "Home", href: "/home", icon: Home },
     { label: "Environments", href: "/environments", icon: Layers },
     { label: "Extension", href: "/extension-monitoring", icon: Activity },
-    { label: "Endpoint Sensor", href: "/endpoint-sensor", icon: Laptop },
     { label: "Applications", href: "/applications", icon: LayoutGrid },
     { label: "Shadow AI", href: "/shadow-ai", icon: ScanSearch },
     { label: "Findings", href: "/findings", icon: ShieldAlert },
     { label: "Sessions", href: "/sessions", icon: History },
+    { label: "Collectors", href: "/collectors", icon: Laptop },
   ];
 
   return (
@@ -238,11 +237,8 @@ function NavRail() {
       {railItems.map((item) => (
         (() => {
           const isExtensionRail = item.href === "/extension-monitoring";
-          const isEndpointRail = item.href === "/endpoint-sensor";
           const isActive = isExtensionRail
             ? pathname.startsWith("/extension/") || pathname.startsWith("/extension-monitoring")
-            : isEndpointRail
-              ? pathname.startsWith("/endpoint-sensor") || pathname.startsWith("/sensor/")
             : pathname.startsWith(item.href);
           return (
             <Link

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { BookOpen, Code2, Download, Globe, LayoutGrid, RefreshCw, Server } from "lucide-react";
 
 import { useConsole } from "src/app/(console)/console-context";
@@ -187,7 +186,7 @@ export default function ApplicationsPage() {
           <EmptyTab
             icon={Code2}
             title="No code assistant activity yet"
-            description="Cursor, Windsurf, and GitHub Copilot usage will appear here once the sensor observes activity."
+            description="Cursor, Windsurf, and GitHub Copilot usage will appear here once an ADR collector observes activity."
           />
         )
       ) : null}
@@ -207,14 +206,6 @@ export default function ApplicationsPage() {
           description="MCP server usage tracking is planned for a future release."
         />
       ) : null}
-
-      <p className="text-xs text-slate/60">
-        Raw sensor telemetry and content-inspection events remain available on the{" "}
-        <Link href="/endpoint-sensor" className="font-semibold text-secondary hover:underline">
-          Endpoint Sensor
-        </Link>{" "}
-        page.
-      </p>
 
       {catalogOpen && tenantId ? (
         <CatalogPanel

@@ -25,7 +25,7 @@ export const config = {
     "/events",
     "/extension/:path*",
     "/extension-monitoring",
-    "/sensor/:path*",
+    "/collectors",
     "/tenants",
     "/onboarding/:path*",
   ],
