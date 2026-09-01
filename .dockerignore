@@ -4,3 +4,10 @@ node_modules
 *.log
 README.md
 ControlCenter-DesignDocument.md
+.env
+.env.*
+.idea
+.claude
+.vscode
+GuardrailWizardUX.md
+RENAME-IMPACT-SERVICE.md

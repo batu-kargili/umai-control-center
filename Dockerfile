@@ -1,19 +1,23 @@
-FROM node:22.11.0-alpine3.20 AS deps
+ARG SOURCE_DATE_EPOCH
+FROM node:22.11.0-alpine3.20@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e AS deps
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --cache /tmp/npm-cache \
+    && rm -rf /tmp/npm-cache /root/.npm
 
-FROM node:22.11.0-alpine3.20 AS builder
+FROM node:22.11.0-alpine3.20@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e AS builder
 
 WORKDIR /app
 ARG NEXT_PUBLIC_UMAI_EXTENSION_ID
 ENV NEXT_PUBLIC_UMAI_EXTENSION_ID=${NEXT_PUBLIC_UMAI_EXTENSION_ID}
+ENV NEXT_TELEMETRY_DISABLED=1
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npm run build
+RUN --mount=type=secret,id=next_server_actions_key,env=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY \
+    npm run build
 
-FROM node:22.11.0-alpine3.20 AS runner
+FROM node:22.11.0-alpine3.20@sha256:b64ced2e7cd0a4816699fe308ce6e8a08ccba463c757c00c14cd372e3d2c763e AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
