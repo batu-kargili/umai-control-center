@@ -37,9 +37,13 @@ import {
   History
 } from "lucide-react";
 
-function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding" }) {
-  if (variant === "onboarding") {
-    return (
+// Onboarding başlığı ile konsol başlığı AYRI bileşenlerdir, tek bir bileşenin iki
+// dalı değil. Tek bileşen olduklarında onboarding dalı hook'lardan önce return
+// ediyordu; `isOnboarding` değiştiğinde aynı JSX konumundaki aynı örneğin hook
+// sayısı 0'dan 5'e çıkıyor ve React "Rendered more hooks than during the previous
+// render" ile çöküyordu — tam olarak yeni müşterinin onboarding'i bitirdiği anda.
+function OnboardingNavbar() {
+  return (
       <header className="h-[56px] bg-white border-b border-secondary/10 text-ink flex items-center justify-between px-6 z-50">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-secondary/15 bg-secondary/8">
@@ -59,10 +63,11 @@ function TopNavbar({ variant = "default" }: { variant?: "default" | "onboarding"
         <span className="text-xs font-semibold text-slate">
           Complete setup to unlock the console
         </span>
-      </header>
-    );
-  }
+    </header>
+  );
+}
 
+function TopNavbar() {
   const { user } = useUser();
   const { tenant } = useConsole();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -410,7 +415,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
     <ConsoleProvider>
       <ConsoleGate>
         <div className="flex flex-col h-screen overflow-hidden bg-white font-sans selection:bg-secondary/15 italic-none">
-          <TopNavbar variant={isOnboarding ? "onboarding" : "default"} />
+          {isOnboarding ? <OnboardingNavbar /> : <TopNavbar />}
 
           <div className="flex flex-1 overflow-hidden">
             {!isOnboarding && <NavRail />}
