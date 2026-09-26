@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 
+import {
+  buildUpstreamHeaders,
+  hasUnsafePathSegment,
+  type ProxyHeaderOptions,
+} from "src/lib/proxy-headers";
+
 function cleanBaseUrl(value: string): string {
   return value.replace(/\/+$/, "");
 }
@@ -7,26 +13,6 @@ function cleanBaseUrl(value: string): string {
 function buildTargetUrl(baseUrl: string, path: string[], query: string): string {
   const suffix = path.map((segment) => encodeURIComponent(segment)).join("/");
   return `${cleanBaseUrl(baseUrl)}/${suffix}${query}`;
-}
-
-function copyRequestHeaders(request: Request): Headers {
-  const headers = new Headers();
-  const copyNames = [
-    "content-type",
-    "accept",
-    "authorization",
-    "x-tenant-id",
-    "x-device-id",
-    "x-umai-api-key",
-    "x-umai-api-key",
-  ];
-  for (const name of copyNames) {
-    const value = request.headers.get(name);
-    if (value) {
-      headers.set(name, value);
-    }
-  }
-  return headers;
 }
 
 function copyResponseHeaders(source: Headers): Headers {
@@ -49,15 +35,19 @@ function copyResponseHeaders(source: Headers): Headers {
 export async function proxyRequest(
   request: Request,
   upstreamBaseUrl: string,
-  path: string[]
+  path: string[],
+  options: ProxyHeaderOptions = {}
 ): Promise<NextResponse> {
+  if (hasUnsafePathSegment(path)) {
+    return NextResponse.json({ error: "Invalid path" }, { status: 400 });
+  }
   const method = request.method.toUpperCase();
   const targetUrl = buildTargetUrl(
     upstreamBaseUrl,
     path,
     new URL(request.url).search
   );
-  const headers = copyRequestHeaders(request);
+  const headers = buildUpstreamHeaders(request.headers, options);
   const body =
     method === "GET" || method === "HEAD"
       ? undefined

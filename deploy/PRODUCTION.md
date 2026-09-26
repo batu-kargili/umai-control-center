@@ -134,6 +134,20 @@ The default quick-start keeps `CC_SESSION_SECURE=false` so login works over `htt
 | `LDAP_ALLOWED_GROUPS` | No | Comma-separated groups allowed to log in. Empty means all |
 | `LDAP_INSECURE_SKIP_VERIFY` | No | Skip TLS verification for LDAPS. Not recommended |
 
+### Control Center - Admin API credentials
+
+umai-service enforces admin JWTs in production (`UMAI_ADMIN_AUTH_MODE=jwt`). The console
+mints a 5-minute HS256 token per proxied `/api/admin/*` call for the signed-in operator
+(`sub` = LDAP subject, `tenant_id` = `CONTROL_CENTER_ORGANIZATION_ID`, `roles`) and never
+forwards a browser-supplied `Authorization` header.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CONTROL_CENTER_ADMIN_JWT_SECRET` | Yes in production | Must equal umai-service's `UMAI_ADMIN_JWT_HS256_SECRET`. Startup fails in production without it |
+| `CONTROL_CENTER_ADMIN_ROLE` | No | Role(s) granted to every operator not matched by a group mapping. One or more of `tenant-admin`, `tenant-auditor`, `platform-admin`, `license-admin`. Default: `tenant-admin` |
+| `CONTROL_CENTER_ADMIN_GROUPS_PLATFORM_ADMIN` / `_LICENSE_ADMIN` / `_TENANT_ADMIN` / `_TENANT_AUDITOR` | No | LDAP groups (cn short name or full DN) granting that role. Comma-separated; use `;` when listing full DNs |
+| `CONTROL_CENTER_ADMIN_JWT_AUDIENCE` | No | Set only when umai-service sets `UMAI_ADMIN_JWT_AUDIENCE`; the values must match |
+
 ## Pinning a Version
 
 Replace `latest` with a specific release tag to lock the stack:

@@ -1,3 +1,5 @@
+import { NextResponse } from "next/server";
+
 import { proxyRequest } from "src/lib/proxy";
 
 export const runtime = "nodejs";
@@ -13,7 +15,13 @@ async function handle(
   request: Request,
   params: { path?: string[] }
 ) {
-  return await proxyRequest(request, upstreamPublicBaseUrl(), params.path || []);
+  const path = params.path || [];
+  // This route has no session gate. It must never reach the admin API: in network-trust
+  // mode that would be unauthenticated admin access. Admin calls go through /api/admin.
+  if ((path[0] || "").toLowerCase() === "admin") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  return await proxyRequest(request, upstreamPublicBaseUrl(), path);
 }
 
 export async function GET(
