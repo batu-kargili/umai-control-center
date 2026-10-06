@@ -111,7 +111,10 @@ const PREFLIGHT_RULE_TEMPLATES: Array<{
     rule: {
       id: "preflight-jailbreak",
       mode: "REGEX",
-      pattern: "(?i)jailbreak|do anything now|dan\\b",
+      // "DAN" matches case-sensitively and as a whole token. Case-insensitive
+      // and unanchored, it also matched the Turkish ablative suffix -dan, so
+      // everyday sentences ("KVKK acisindan ...") were blocked outright.
+      pattern: "(?i:jailbreak|do anything now)|\\bDAN\\b",
       block_on_match: true,
     },
   },
