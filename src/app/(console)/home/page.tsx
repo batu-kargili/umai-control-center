@@ -1,7 +1,9 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { useConsole } from "src/app/(console)/console-context";
 import {
   fetchAlerts,
@@ -12,24 +14,37 @@ import {
   type Environment,
   type Project,
 } from "src/lib/api";
-import {
-  Globe,
-  Folder,
-  Shield,
-  FileText,
-  Bell,
-  ChevronRight,
-} from "lucide-react";
 
 const numberFormatter = new Intl.NumberFormat("en-US");
 
+// Alerts endpoint'inin sayacı yok, en fazla 250 kayıt döner (created_at desc).
+// Son 24 saat bu pencereden sayılır; pencere tamamen 24 saat içindeyse gerçek
+// sayı daha büyük olabilir, o durumda "250+" gösterilir.
+const ALERT_FETCH_LIMIT = 250;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface ProjectRow {
+  environment: Environment;
+  project: Project;
+  guardrails: number;
+  policies: number;
+  alerts24h: number;
+}
+
+function formatCount(value: number, capped = false) {
+  return capped ? `${numberFormatter.format(value)}+` : numberFormatter.format(value);
+}
+
+function planLabel(plan: string | null | undefined) {
+  if (!plan) return null;
+  return `${plan.charAt(0).toUpperCase()}${plan.slice(1)} plan`;
+}
+
 export default function HomePage() {
+  const router = useRouter();
   const { tenantId, tenant } = useConsole();
   const [envs, setEnvs] = useState<Environment[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [guardrailsCount, setGuardrailsCount] = useState(0);
-  const [policiesCount, setPoliciesCount] = useState(0);
-  const [alertsCount, setAlertsCount] = useState(0);
+  const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,45 +60,44 @@ export default function HomePage() {
       setError(null);
       try {
         const environmentList = await fetchEnvironments(tenantId);
-        if (!active) return;
         const projectLists = await Promise.all(
           environmentList.map((env) =>
             fetchProjects(tenantId, env.environment_id).catch(() => [])
           )
         );
-        const projectList = projectLists.flat();
+        const envById = new Map(environmentList.map((env) => [env.environment_id, env]));
+        const since = Date.now() - DAY_MS;
 
-        const guardrailTotals = await Promise.all(
-          projectList.map((project) =>
-            fetchGuardrails(tenantId, project.environment_id, project.project_id)
-              .then((items) => items.length)
-              .catch(() => 0)
-          )
-        );
-
-        const policyTotals = await Promise.all(
-          projectList.map((project) =>
-            fetchPolicies(tenantId, project.environment_id, project.project_id)
-              .then((items) => items.length)
-              .catch(() => 0)
-          )
-        );
-
-        const alertTotals = await Promise.all(
-          projectList.map((project) =>
-            fetchAlerts(tenantId, project.environment_id, project.project_id, 25)
-              .then((items) => items.length)
-              .catch(() => 0)
-          )
+        const projectRows = await Promise.all(
+          projectLists.flat().map(async (project): Promise<ProjectRow> => {
+            const [guardrails, policies, alerts] = await Promise.all([
+              fetchGuardrails(tenantId, project.environment_id, project.project_id)
+                .then((items) => items.length)
+                .catch(() => 0),
+              fetchPolicies(tenantId, project.environment_id, project.project_id)
+                .then((items) => items.length)
+                .catch(() => 0),
+              fetchAlerts(tenantId, project.environment_id, project.project_id, ALERT_FETCH_LIMIT)
+                .catch(() => []),
+            ]);
+            return {
+              environment: envById.get(project.environment_id) ?? {
+                tenant_id: tenantId,
+                environment_id: project.environment_id,
+                name: project.environment_id,
+              },
+              project,
+              guardrails,
+              policies,
+              alerts24h: alerts.filter((alert) => Date.parse(alert.created_at) >= since).length,
+            };
+          })
         );
 
         if (!active) return;
         setEnvs(environmentList);
-        setProjects(projectList);
-        setGuardrailsCount(guardrailTotals.reduce((sum, value) => sum + value, 0));
-        setPoliciesCount(policyTotals.reduce((sum, value) => sum + value, 0));
-        setAlertsCount(alertTotals.reduce((sum, value) => sum + value, 0));
-      } catch (err) {
+        setRows(projectRows);
+      } catch {
         if (!active) return;
         setError("Unable to load workspace data right now.");
       } finally {
@@ -97,184 +111,153 @@ export default function HomePage() {
     };
   }, [tenantId]);
 
-  const resourceOverview = useMemo(
-    () => {
-      const primaryEnvId = tenant?.environment_id || envs[0]?.environment_id;
-      const projectHubHref = primaryEnvId ? `/environments/${primaryEnvId}/projects` : "/environments";
-
-      return [
-      {
-        label: "Environments",
-        value: envs.length,
-        icon: Globe,
-        color: "text-secondary",
-        surface: "bg-secondary/10",
-        href: "/environments",
-      },
-      {
-        label: "Projects",
-        value: projects.length,
-        icon: Folder,
-        color: "text-secondary",
-        surface: "bg-secondary/10",
-        href: projectHubHref,
-      },
-      {
-        label: "Guardrails",
-        value: guardrailsCount,
-        icon: Shield,
-        color: "text-secondary",
-        surface: "bg-secondary/10",
-        href: projectHubHref,
-      },
-      {
-        label: "Policies",
-        value: policiesCount,
-        icon: FileText,
-        color: "text-secondary",
-        surface: "bg-secondary/10",
-        href: projectHubHref,
-      },
-      {
-        label: "Alerts",
-        value: alertsCount,
-        icon: Bell,
-        color: "text-secondary",
-        surface: "bg-secondary/10",
-        href: projectHubHref,
-      },
-    ];
-    },
-    [envs, tenant?.environment_id, projects.length, guardrailsCount, policiesCount, alertsCount]
+  const totals = useMemo(
+    () => ({
+      guardrails: rows.reduce((sum, row) => sum + row.guardrails, 0),
+      policies: rows.reduce((sum, row) => sum + row.policies, 0),
+      alerts24h: rows.reduce((sum, row) => sum + row.alerts24h, 0),
+      alertsCapped: rows.some((row) => row.alerts24h >= ALERT_FETCH_LIMIT),
+    }),
+    [rows]
   );
 
+  const primaryEnvId = tenant?.environment_id || envs[0]?.environment_id;
+  const projectHubHref = primaryEnvId ? `/environments/${primaryEnvId}/projects` : "/environments";
+
+  const stats = [
+    { label: "Environments", value: formatCount(envs.length), href: "/environments" },
+    { label: "Projects", value: formatCount(rows.length), href: projectHubHref },
+    { label: "Guardrails", value: formatCount(totals.guardrails), href: projectHubHref },
+    { label: "Policies", value: formatCount(totals.policies), href: projectHubHref },
+    {
+      label: "Alerts (24h)",
+      value: formatCount(totals.alerts24h, totals.alertsCapped),
+      href: projectHubHref,
+    },
+  ];
+
+  const summary = [
+    planLabel(tenant?.plan),
+    !loading && `${envs.length} ${envs.length === 1 ? "environment" : "environments"}`,
+    !loading && `${rows.length} ${rows.length === 1 ? "project" : "projects"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
-    <div className="space-y-12 animate-in fade-in duration-700">
-      <header>
-        <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Welcome</h1>
-        <p className="mt-2 text-sm text-slate">
-          {tenant?.tenant_name || "Organization"} · Plan:{" "}
-          <span className="font-semibold text-secondary">{tenant?.plan || "free"}</span>
-        </p>
-        {tenantId && (
-          <p className="text-xs text-slate mt-2">
-            Workspace tenant: <span className="font-semibold text-secondary">{tenantId}</span>
-          </p>
-        )}
-        {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    <div className="space-y-8">
+      <header className="border-b border-gray-200 pb-5">
+        <h1 className="text-2xl font-semibold text-gray-900">
+          {tenant?.tenant_name || "Organization"}
+        </h1>
+        {summary && <p className="mt-1 text-sm text-gray-500">{summary}</p>}
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       </header>
 
-      <section className="space-y-6">
-        <h3 className="text-lg font-bold text-gray-800">Your resource overview</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-          {resourceOverview.map((item) => (
-            <Link
-              key={item.label}
-              href={item.href}
-              className="group flex cursor-pointer items-start gap-4 rounded-xl border border-secondary/10 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-secondary/25 hover:shadow-accent"
-            >
-              <div
-                className={`mt-0.5 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${item.surface} ${item.color}`}
-              >
-                <item.icon className="w-5 h-5" />
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-gray-500 transition-colors group-hover:text-secondary">
-                    {item.label}
-                  </span>
-                </div>
-                <p className="text-xl font-bold text-gray-900 mt-1">
-                  {loading ? "—" : numberFormatter.format(item.value)}
-                </p>
-              </div>
-            </Link>
-          ))}
-        </div>
+      <section className="grid grid-cols-1 divide-y divide-gray-200 rounded border border-gray-200 bg-white sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+        {stats.map((item) => (
+          <Link
+            key={item.label}
+            href={item.href}
+            className="px-5 py-4 transition-colors hover:bg-gray-50"
+          >
+            <p className="text-xs font-medium text-gray-500">{item.label}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">
+              {loading ? "—" : item.value}
+            </p>
+          </Link>
+        ))}
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <section className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-gray-800">Environments</h3>
-            <Link href="/environments" className="text-xs font-semibold text-secondary transition-colors hover:text-secondary/80">
-              Manage environments <ChevronRight className="inline w-3 h-3" />
-            </Link>
-          </div>
-          <div className="bg-white border border-secondary/10 p-6 rounded-xl shadow-sm min-h-[240px] space-y-4">
-            {loading ? (
-              <div className="text-sm text-gray-400">Loading environments…</div>
-            ) : envs.length === 0 ? (
-              <div className="text-sm text-gray-500">
-                No environments found. Create one to start configuring guardrails.
-              </div>
-            ) : (
-              envs.map((env) => (
-                <Link
-                  key={env.environment_id}
-                  href={`/environments/${env.environment_id}`}
-                  className="flex items-center justify-between group rounded-xl px-2 py-1 transition-colors hover:bg-secondary/5"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary/10 text-secondary">
-                      <Globe className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900 transition-colors group-hover:text-secondary">
-                        {env.name}
-                      </p>
-                      <p className="text-xs text-gray-400">ID: {env.environment_id}</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300 transition-colors group-hover:text-secondary" />
-                </Link>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-bold text-gray-800">Projects</h3>
-            <Link href="/environments" className="text-xs font-semibold text-secondary transition-colors hover:text-secondary/80">
-              View all projects <ChevronRight className="inline w-3 h-3" />
-            </Link>
-          </div>
-          <div className="bg-white border border-secondary/10 p-6 rounded-xl shadow-sm min-h-[240px] space-y-4">
-            {loading ? (
-              <div className="text-sm text-gray-400">Loading projects…</div>
-            ) : projects.length === 0 ? (
-              <div className="text-sm text-gray-500">
-                No projects found yet. Add your first project to manage guardrails.
-              </div>
-            ) : (
-              projects.map((project) => (
-                <Link
-                  key={`${project.environment_id}:${project.project_id}`}
-                  href={`/environments/${project.environment_id}/projects/${project.project_id}`}
-                  className="flex items-center justify-between group rounded-xl px-2 py-1 transition-colors hover:bg-secondary/5"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary/10 text-secondary">
-                      <Folder className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900 transition-colors group-hover:text-secondary">
-                        {project.name}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        {project.environment_id} / {project.project_id}
-                      </p>
-                    </div>
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-gray-300 transition-colors group-hover:text-secondary" />
-                </Link>
-              ))
-            )}
-          </div>
-        </section>
-      </div>
-
+      <section>
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Projects</h2>
+          <Link href="/environments" className="text-sm font-medium text-secondary hover:underline">
+            Manage environments
+          </Link>
+        </div>
+        <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Project</th>
+                <th className="px-4 py-2.5 font-medium">Environment</th>
+                <th className="px-4 py-2.5 text-right font-medium">Guardrails</th>
+                <th className="px-4 py-2.5 text-right font-medium">Policies</th>
+                <th className="px-4 py-2.5 text-right font-medium">Alerts (24h)</th>
+                <th className="w-10 px-2 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                    Loading projects…
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                    No projects yet.{" "}
+                    <Link href="/environments" className="font-medium text-secondary hover:underline">
+                      Create one
+                    </Link>{" "}
+                    to start configuring guardrails.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((row) => {
+                  const projectHref = `/environments/${row.project.environment_id}/projects/${row.project.project_id}`;
+                  const envHref = `/environments/${row.project.environment_id}`;
+                  return (
+                    <tr
+                      key={`${row.project.environment_id}:${row.project.project_id}`}
+                      onClick={() => router.push(projectHref)}
+                      className="cursor-pointer transition-colors hover:bg-gray-50"
+                    >
+                      <td className="px-4 py-3">
+                        <Link
+                          href={projectHref}
+                          onClick={(event) => event.stopPropagation()}
+                          className="font-medium text-gray-900 hover:text-secondary"
+                        >
+                          {row.project.name}
+                        </Link>
+                        {row.project.project_id !== row.project.name && (
+                          <span className="ml-2 font-mono text-xs text-gray-400">
+                            {row.project.project_id}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-600">
+                        <Link
+                          href={envHref}
+                          onClick={(event) => event.stopPropagation()}
+                          className="hover:text-secondary"
+                        >
+                          {row.environment.name}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                        {formatCount(row.guardrails)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                        {formatCount(row.policies)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                        {formatCount(row.alerts24h, row.alerts24h >= ALERT_FETCH_LIMIT)}
+                      </td>
+                      <td className="px-2 py-3 text-gray-400">
+                        <ChevronRight className="h-4 w-4" />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Shield, Monitor, AlertTriangle, CheckCircle2, Eye, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronUp, RefreshCw, Search } from "lucide-react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import { useConsole } from "src/app/(console)/console-context";
 import {
@@ -10,26 +11,66 @@ import {
   fetchExtensionEvents,
   fetchExtensionSummary,
 } from "src/lib/api";
+import {
+  BTN_SECONDARY,
+  CopyButton,
+  EmptyState,
+  INPUT,
+  InlineNotice,
+  KeyValue,
+  SELECT,
+  SectionCard,
+  TAG,
+} from "src/app/(console)/console-ui";
 import ExtensionGuardrailControl from "./extension-guardrail-control";
 
+const SUMMARY_DAYS = 14;
+const EVENT_LIMIT = 250;
+const BLUE = "#0f62fe";
+const GRID = "#e5e7eb";
+const TICK = "#6b7280";
+
+const SITE_LABELS: Record<string, string> = {
+  chatgpt: "ChatGPT",
+  gemini: "Gemini",
+  claude: "Claude",
+};
+
+// Extension kararları guardrail aksiyonlarından farklı bir sözlük kullanır.
+const DECISION_META: Record<string, { label: string; tag: string }> = {
+  allow: { label: "Allowed", tag: "bg-emerald-50 text-emerald-700" },
+  warn: { label: "Warned", tag: "bg-amber-50 text-amber-800" },
+  block: { label: "Blocked", tag: "bg-red-50 text-red-700" },
+  redact: { label: "Redacted", tag: "bg-secondary/10 text-secondary" },
+  justify: { label: "Justification required", tag: "bg-violet-50 text-violet-700" },
+};
+
+const timeFormatter = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+const fullDateFormatter = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "medium" });
+const dayFormatter = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+const numberFormatter = new Intl.NumberFormat("en-US");
+
+function siteLabel(site: string) {
+  return SITE_LABELS[site] ?? site;
+}
+
 function shortHash(value?: string | null): string {
-  if (!value) return "-";
+  if (!value) return "—";
   if (value.length <= 14) return value;
-  return `${value.slice(0, 8)}...${value.slice(-6)}`;
+  return `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
 function userLabel(event: ExtensionEventItem): string {
   const payloadName = event.payload?.user_name;
-  if (typeof payloadName === "string" && payloadName.trim().length > 0) {
-    return payloadName.trim();
-  }
-  if (event.user_email && event.user_email.trim().length > 0) {
-    return event.user_email.trim();
-  }
-  if (event.user_idp_subject && event.user_idp_subject.trim().length > 0) {
-    return event.user_idp_subject.trim();
-  }
-  return "-";
+  if (typeof payloadName === "string" && payloadName.trim()) return payloadName.trim();
+  if (event.user_email?.trim()) return event.user_email.trim();
+  if (event.user_idp_subject?.trim()) return event.user_idp_subject.trim();
+  return "—";
 }
 
 function payloadString(event: ExtensionEventItem, key: string): string | undefined {
@@ -54,22 +95,6 @@ function transactionHash(event: ExtensionEventItem): string | null {
   );
 }
 
-function promptLength(event: ExtensionEventItem): number | undefined {
-  return (
-    event.prompt_len ??
-    payloadNumber(event, "prompt_text_len") ??
-    payloadNumber(event, "prompt_len")
-  );
-}
-
-function responseLength(event: ExtensionEventItem): number | undefined {
-  return (
-    event.response_len ??
-    payloadNumber(event, "response_text_len") ??
-    payloadNumber(event, "response_len")
-  );
-}
-
 function hasFullContent(event: ExtensionEventItem): boolean {
   return Boolean(
     payloadString(event, "prompt_text") ||
@@ -78,36 +103,22 @@ function hasFullContent(event: ExtensionEventItem): boolean {
   );
 }
 
-function DetailRow({
-  label,
-  value,
-  mono = false,
-}: {
-  label: string;
-  value?: string | number | null;
-  mono?: boolean;
-}) {
+function DecisionTag({ decision }: { decision?: string | null }) {
+  if (!decision) return <span className="text-gray-400">—</span>;
+  const meta = DECISION_META[decision];
   return (
-    <div className="rounded-xl border border-secondary/10 bg-slate/5 px-3 py-2">
-      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">{label}</p>
-      <p className={`mt-1 break-all text-xs text-ink ${mono ? "font-mono" : ""}`}>
-        {value ?? "-"}
-      </p>
-    </div>
+    <span className={`inline-flex rounded px-1.5 py-0.5 text-xs font-medium ${meta?.tag ?? "bg-gray-100 text-gray-700"}`}>
+      {meta?.label ?? decision}
+    </span>
   );
 }
 
 function ContentBlock({ label, value }: { label: string; value?: string }) {
-  if (!value) {
-    return null;
-  }
+  if (!value) return null;
   return (
-    <div className="space-y-2">
-      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">{label}</p>
-      <pre className="max-h-48 overflow-auto rounded-2xl border border-secondary/10 bg-white p-3 text-xs leading-5 text-ink">
-        {value}
-      </pre>
-    </div>
+    <SectionCard title={label}>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-sans text-sm leading-6 text-gray-900">{value}</pre>
+    </SectionCard>
   );
 }
 
@@ -115,158 +126,185 @@ export default function ExtensionMonitoringPage() {
   const { tenant, tenantId } = useConsole();
   const [events, setEvents] = useState<ExtensionEventItem[]>([]);
   const [summary, setSummary] = useState<ExtensionSummary | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [siteFilter, setSiteFilter] = useState<string>("all");
-  const [decisionFilter, setDecisionFilter] = useState<string>("all");
-  const [chainFilter, setChainFilter] = useState<string>("all");
-  const [userFilter, setUserFilter] = useState<string>("");
-  const [selectedEvent, setSelectedEvent] = useState<ExtensionEventItem | null>(null);
+  const [siteFilter, setSiteFilter] = useState("all");
+  const [decisionFilter, setDecisionFilter] = useState("all");
+  const [chainFilter, setChainFilter] = useState("all");
+  const [userFilter, setUserFilter] = useState("");
+  const [selected, setSelected] = useState<ExtensionEventItem | null>(null);
+  const [rawOpen, setRawOpen] = useState(false);
 
-  const refresh = async () => {
-    if (!tenantId) {
-      return;
-    }
+  const refresh = useCallback(async () => {
+    if (!tenantId) return;
     setLoading(true);
     setError(null);
     try {
       const [summaryResult, eventRows] = await Promise.all([
-        fetchExtensionSummary(tenantId, 14),
+        fetchExtensionSummary(tenantId, SUMMARY_DAYS),
         fetchExtensionEvents(tenantId, {
           site: siteFilter !== "all" ? siteFilter : undefined,
           decision: decisionFilter !== "all" ? decisionFilter : undefined,
-          chain_valid:
-            chainFilter === "all" ? undefined : chainFilter === "valid",
-          limit: 250,
+          chain_valid: chainFilter === "all" ? undefined : chainFilter === "valid",
+          limit: EVENT_LIMIT,
         }),
       ]);
       setSummary(summaryResult);
       setEvents(eventRows);
     } catch (err) {
       console.error(err);
-      setError("Failed to load extension monitoring data.");
+      setError("Extension data could not be loaded.");
     } finally {
       setLoading(false);
     }
-  };
+  }, [chainFilter, decisionFilter, siteFilter, tenantId]);
 
   useEffect(() => {
     void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, siteFilter, decisionFilter, chainFilter]);
-
-  const topSites = useMemo(() => {
-    if (!summary) return [];
-    return Object.entries(summary.by_site).sort((a, b) => b[1] - a[1]).slice(0, 4);
-  }, [summary]);
+  }, [refresh]);
 
   const filteredEvents = useMemo(() => {
     const query = userFilter.trim().toLowerCase();
-    if (!query) {
-      return events;
-    }
-    return events.filter((event) => {
-      const name =
-        typeof event.payload?.user_name === "string"
-          ? event.payload.user_name.toLowerCase()
-          : "";
-      const email = (event.user_email ?? "").toLowerCase();
-      const subject = (event.user_idp_subject ?? "").toLowerCase();
-      return (
-        name.includes(query) ||
-        email.includes(query) ||
-        subject.includes(query)
-      );
-    });
+    if (!query) return events;
+    return events.filter((event) =>
+      [
+        typeof event.payload?.user_name === "string" ? event.payload.user_name : "",
+        event.user_email ?? "",
+        event.user_idp_subject ?? "",
+        event.device_id,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
   }, [events, userFilter]);
 
   useEffect(() => {
-    if (!selectedEvent) {
-      return;
-    }
-    const stillVisible = filteredEvents.some((event) => event.id === selectedEvent.id);
-    if (!stillVisible) {
-      setSelectedEvent(null);
-    }
-  }, [filteredEvents, selectedEvent]);
-
-  useEffect(() => {
-    if (!selectedEvent) {
-      return;
-    }
+    if (!selected) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelectedEvent(null);
-      }
+      if (event.key === "Escape") setSelected(null);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [selectedEvent]);
+  }, [selected]);
+
+  const sites = useMemo(() => {
+    if (!summary) return [];
+    return Object.entries(summary.by_site).sort((a, b) => b[1] - a[1]);
+  }, [summary]);
+  const maxSiteCount = Math.max(1, ...sites.map(([, count]) => count));
+
+  const daily = useMemo(
+    () =>
+      (summary?.daily ?? []).map((item) => ({
+        day: item.day,
+        label: dayFormatter.format(new Date(item.day)),
+        count: item.count,
+      })),
+    [summary]
+  );
+  const hasDaily = daily.some((item) => item.count > 0);
+
+  const stats = [
+    { label: `Events (${SUMMARY_DAYS}d)`, value: summary?.total_events ?? 0 },
+    { label: "Users", value: summary?.unique_users ?? 0 },
+    { label: "Devices", value: summary?.unique_devices ?? 0 },
+    { label: "Blocked", value: summary?.blocked_events ?? 0 },
+    { label: "Warned", value: summary?.warned_events ?? 0 },
+    { label: "Redacted", value: summary?.redacted_events ?? 0 },
+  ];
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+      <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-secondary/70">Organization</p>
-          <h2 className="font-display text-3xl text-ink">Extension Monitoring</h2>
-          <p className="text-sm text-slate">
-            Browser-level AI usage telemetry from forced UMAI extension deployment.
+          <h1 className="text-2xl font-semibold text-gray-900">Browser extension</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            AI usage captured by the UMAI extension on ChatGPT, Gemini and Claude · last {SUMMARY_DAYS} days
+            {summary?.last_event_at && ` · last event ${fullDateFormatter.format(new Date(summary.last_event_at))}`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs font-semibold text-emerald-700">
-            Managed extension enforced
-          </span>
-          <button
-            type="button"
-            onClick={() => void refresh()}
-            disabled={loading || !tenantId}
-            className="inline-flex items-center gap-2 rounded-full border border-secondary/15 bg-white px-4 py-2 text-xs font-semibold text-secondary transition-colors hover:bg-secondary/5"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            Refresh
-          </button>
-        </div>
-      </div>
+        <button type="button" className={BTN_SECONDARY} onClick={() => void refresh()} disabled={loading || !tenantId}>
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh
+        </button>
+      </header>
 
-      {error ? (
-        <div className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
-          {error}
-        </div>
-      ) : null}
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <div className="rounded-2xl border border-secondary/10 bg-white p-4 shadow-sm">
-          <p className="text-xs text-secondary/70">Events (14d)</p>
-          <p className="mt-1 text-2xl font-semibold text-secondary">
-            {summary?.total_events ?? 0}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-secondary/10 bg-white p-4 shadow-sm">
-          <p className="text-xs text-secondary/70">Devices</p>
-          <p className="mt-1 text-2xl font-semibold text-secondary">
-            {summary?.unique_devices ?? 0}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate/10 bg-white p-4 shadow-sm">
-          <p className="text-xs text-slate">Blocked</p>
-          <p className="mt-1 text-2xl font-semibold text-red-600">
-            {summary?.blocked_events ?? 0}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate/10 bg-white p-4 shadow-sm">
-          <p className="text-xs text-slate">Warned</p>
-          <p className="mt-1 text-2xl font-semibold text-amber-600">
-            {summary?.warned_events ?? 0}
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate/10 bg-white p-4 shadow-sm">
-          <p className="text-xs text-slate">Redacted</p>
-          <p className="mt-1 text-2xl font-semibold text-emerald-600">
-            {summary?.redacted_events ?? 0}
-          </p>
-        </div>
+      <section className="grid grid-cols-2 divide-y divide-gray-200 rounded border border-gray-200 bg-white sm:grid-cols-3 sm:divide-x xl:grid-cols-6 xl:divide-y-0">
+        {stats.map((item) => (
+          <div key={item.label} className="px-5 py-4">
+            <p className="text-xs font-medium text-gray-500">{item.label}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">
+              {loading && !summary ? "—" : numberFormatter.format(item.value)}
+            </p>
+          </div>
+        ))}
       </section>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <SectionCard title="Events per day" description={`Last ${SUMMARY_DAYS} days`}>
+          <div className="h-52">
+            {loading && !summary ? (
+              <div className="flex h-full items-center justify-center text-sm text-gray-400">Loading…</div>
+            ) : !hasDaily ? (
+              <div className="flex h-full items-center justify-center text-sm text-gray-500">
+                No extension events in the last {SUMMARY_DAYS} days.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={daily} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid stroke={GRID} vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={{ stroke: GRID }} tick={{ fill: TICK, fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tickLine={false} axisLine={false} tick={{ fill: TICK, fontSize: 11 }} />
+                  <Tooltip
+                    formatter={(value) => [numberFormatter.format(Number(value)), "Events"]}
+                    labelStyle={{ color: "#111827", fontWeight: 600, fontSize: 12 }}
+                    itemStyle={{ fontSize: 12 }}
+                    contentStyle={{ borderRadius: 4, border: `1px solid ${GRID}`, boxShadow: "none" }}
+                    cursor={{ fill: "#f3f4f6" }}
+                  />
+                  <Bar dataKey="count" fill={BLUE} radius={[2, 2, 0, 0]} maxBarSize={28} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </SectionCard>
+
+        <SectionCard title="By site" description="Share of events">
+          {sites.length === 0 ? (
+            <p className="text-sm text-gray-500">No site activity yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {sites.map(([site, count]) => (
+                <div key={site}>
+                  <div className="flex items-baseline justify-between text-xs">
+                    <span className="text-gray-900">{siteLabel(site)}</span>
+                    <span className="tabular-nums text-gray-500">
+                      {numberFormatter.format(count)} ·{" "}
+                      {summary?.total_events ? Math.round((count / summary.total_events) * 100) : 0}%
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 bg-gray-100">
+                    <div className="h-full bg-secondary" style={{ width: `${(count / maxSiteCount) * 100}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {summary && Object.keys(summary.by_decision).length > 0 && (
+            <div className="mt-4 flex flex-wrap gap-1.5 border-t border-gray-200 pt-4">
+              {Object.entries(summary.by_decision)
+                .sort((a, b) => b[1] - a[1])
+                .map(([decision, count]) => (
+                  <span key={decision} className={TAG}>
+                    {DECISION_META[decision]?.label ?? decision} · {numberFormatter.format(count)}
+                  </span>
+                ))}
+            </div>
+          )}
+        </SectionCard>
+      </div>
 
       <ExtensionGuardrailControl
         tenantId={tenantId}
@@ -274,297 +312,247 @@ export default function ExtensionMonitoringPage() {
         projectId={tenant?.project_id ?? null}
       />
 
-      <section className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <select
-            value={siteFilter}
-            onChange={(event) => setSiteFilter(event.target.value)}
-            className="h-9 rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none"
-          >
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="mr-auto text-base font-semibold text-gray-900">Events</h2>
+          <div className="relative min-w-[240px]">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              className={`${INPUT} pl-8`}
+              placeholder="Search user or device"
+              value={userFilter}
+              onChange={(event) => setUserFilter(event.target.value)}
+              aria-label="Search events"
+            />
+          </div>
+          <select className={SELECT} value={siteFilter} onChange={(event) => setSiteFilter(event.target.value)} aria-label="Filter by site">
             <option value="all">All sites</option>
             <option value="chatgpt">ChatGPT</option>
             <option value="gemini">Gemini</option>
             <option value="claude">Claude</option>
           </select>
-          <select
-            value={decisionFilter}
-            onChange={(event) => setDecisionFilter(event.target.value)}
-            className="h-9 rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none"
-          >
+          <select className={SELECT} value={decisionFilter} onChange={(event) => setDecisionFilter(event.target.value)} aria-label="Filter by decision">
             <option value="all">All decisions</option>
-            <option value="allow">allow</option>
-            <option value="warn">warn</option>
-            <option value="block">block</option>
-            <option value="redact">redact</option>
-            <option value="justify">justify</option>
+            {Object.entries(DECISION_META).map(([value, meta]) => (
+              <option key={value} value={value}>
+                {meta.label}
+              </option>
+            ))}
           </select>
-          <select
-            value={chainFilter}
-            onChange={(event) => setChainFilter(event.target.value)}
-            className="h-9 rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none"
-          >
-            <option value="all">All chain status</option>
+          <select className={SELECT} value={chainFilter} onChange={(event) => setChainFilter(event.target.value)} aria-label="Filter by chain status">
+            <option value="all">All chain states</option>
             <option value="valid">Chain valid</option>
-            <option value="invalid">Chain invalid</option>
+            <option value="invalid">Chain broken</option>
           </select>
-          <input
-            type="text"
-            value={userFilter}
-            onChange={(event) => setUserFilter(event.target.value)}
-            placeholder="Search user (name/email/sub)"
-            className="h-9 min-w-[220px] rounded-full border border-secondary/15 bg-white px-3 text-xs text-ink placeholder:text-slate/60 focus:border-secondary/40 focus:outline-none"
-          />
         </div>
 
-        <div className="overflow-auto rounded-2xl border border-secondary/10">
-          <table className="w-full min-w-[1100px] text-left text-xs">
-            <thead className="bg-secondary/5 text-[11px] uppercase tracking-[0.18em] text-slate/70">
-              <tr>
-                <th className="px-3 py-2">Time</th>
-                <th className="px-3 py-2">Site</th>
-                <th className="px-3 py-2">Event</th>
-                <th className="px-3 py-2">Decision</th>
-                <th className="px-3 py-2">User</th>
-                <th className="px-3 py-2">Device</th>
-                <th className="px-3 py-2">Chain</th>
-                <th className="px-3 py-2">Transaction</th>
-                <th className="px-3 py-2">Message</th>
-                <th className="px-3 py-2">Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
+        {!loading && events.length === 0 ? (
+          <EmptyState>
+            No extension events match these filters. Events arrive as soon as a managed browser with the extension
+            visits ChatGPT, Gemini or Claude.
+          </EmptyState>
+        ) : (
+          <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+            <table className="w-full min-w-[960px] text-sm">
+              <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500">
                 <tr>
-                  <td className="px-3 py-6 text-slate" colSpan={10}>
-                    Loading...
-                  </td>
+                  <th className="px-4 py-2.5 font-medium">Time</th>
+                  <th className="px-4 py-2.5 font-medium">Site</th>
+                  <th className="px-4 py-2.5 font-medium">Event</th>
+                  <th className="px-4 py-2.5 font-medium">Decision</th>
+                  <th className="px-4 py-2.5 font-medium">User</th>
+                  <th className="px-4 py-2.5 font-medium">Device</th>
+                  <th className="px-4 py-2.5 font-medium">Integrity</th>
+                  <th className="px-4 py-2.5 font-medium">Content</th>
+                  <th className="px-4 py-2.5 font-medium">Message</th>
                 </tr>
-              ) : filteredEvents.length === 0 ? (
-                <tr>
-                  <td className="px-3 py-6 text-slate" colSpan={10}>
-                    {userFilter.trim().length > 0
-                      ? "No extension events match current user search."
-                      : "No extension events found."}
-                  </td>
-                </tr>
-              ) : (
-                filteredEvents.map((event) => (
-                  <tr key={event.id} className="border-t border-slate/10 text-slate hover:bg-secondary/5">
-                    <td className="px-3 py-2">{new Date(event.captured_at).toLocaleString()}</td>
-                    <td className="px-3 py-2">
-                        <span className="inline-flex items-center gap-1">
-                        <Monitor className="h-3.5 w-3.5" />
-                        {event.site}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{event.event_type}</td>
-                    <td className="px-3 py-2">
-                      {event.decision ? (
-                        <span className="inline-flex items-center gap-1 font-semibold">
-                          {event.decision === "block" ? (
-                            <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
-                          ) : event.decision === "allow" ? (
-                            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                          ) : (
-                            <Shield className="h-3.5 w-3.5 text-amber-500" />
-                          )}
-                          {event.decision}
-                        </span>
-                      ) : (
-                        "-"
-                      )}
-                    </td>
-                    <td className="max-w-[180px] truncate px-3 py-2">{userLabel(event)}</td>
-                    <td className="px-3 py-2 font-mono text-[11px]">{event.device_id}</td>
-                    <td className="px-3 py-2">
-                      {event.chain_valid ? (
-                        <span className="text-emerald-600">valid</span>
-                      ) : (
-                      <span className="text-red-600">{event.chain_error || "invalid"}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <div className="space-y-1">
-                        <p className="font-mono text-[11px]">{shortHash(transactionHash(event))}</p>
-                        <p className="text-[10px] text-slate/70">
-                          {hasFullContent(event) ? "full content" : "metadata/hash only"}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="max-w-[260px] truncate px-3 py-2">
-                      {event.message || "-"}
-                    </td>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => setSelectedEvent(event)}
-                        className="inline-flex items-center gap-1 rounded-full border border-secondary/15 bg-white px-3 py-1 text-[11px] font-semibold text-secondary transition hover:bg-secondary/5"
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        View
-                      </button>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {loading && events.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
+                      Loading events…
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                ) : filteredEvents.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                      No events match the search.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredEvents.map((event) => (
+                    <tr
+                      key={event.id}
+                      onClick={() => {
+                        setSelected(event);
+                        setRawOpen(false);
+                      }}
+                      className="cursor-pointer transition-colors hover:bg-gray-50"
+                    >
+                      <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-gray-600" title={fullDateFormatter.format(new Date(event.captured_at))}>
+                        {timeFormatter.format(new Date(event.captured_at))}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-900">{siteLabel(event.site)}</td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{event.event_type}</td>
+                      <td className="px-4 py-2.5">
+                        <DecisionTag decision={event.decision} />
+                      </td>
+                      <td className="max-w-[180px] truncate px-4 py-2.5 text-gray-900" title={userLabel(event)}>
+                        {userLabel(event)}
+                      </td>
+                      <td className="px-4 py-2.5 font-mono text-xs text-gray-600" title={event.device_id}>
+                        {shortHash(event.device_id)}
+                      </td>
+                      <td className="px-4 py-2.5 text-xs font-medium">
+                        {event.chain_valid ? (
+                          <span className="text-emerald-700">Chain valid</span>
+                        ) : (
+                          <span className="text-red-700" title={event.chain_error || undefined}>
+                            Chain broken
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-xs text-gray-600">
+                        {hasFullContent(event) ? "Full content" : "Hash only"}
+                      </td>
+                      <td className="max-w-[260px] truncate px-4 py-2.5 text-gray-600" title={event.message || undefined}>
+                        {event.message || "—"}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {!loading && events.length > 0 && (
+          <p className="text-xs text-gray-500">
+            {filteredEvents.length} of {events.length} events
+            {events.length >= EVENT_LIMIT && ` · only the latest ${EVENT_LIMIT} are loaded`}
+          </p>
+        )}
       </section>
 
-      {selectedEvent ? (
-        <div className="fixed inset-0 z-[100] flex justify-end bg-black/35 backdrop-blur-sm">
-          <button
-            type="button"
-            aria-label="Close transaction details overlay"
-            className="absolute inset-0 cursor-default"
-            onClick={() => setSelectedEvent(null)}
-          />
+      {selected && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-gray-900/40" onClick={() => setSelected(null)}>
           <aside
-            className="relative z-10 h-full w-full max-w-[980px] overflow-y-auto border-l border-secondary/10 bg-white p-5 shadow-2xl"
-            aria-label="Transaction details"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Event details"
+            className="flex h-full w-full max-w-[880px] flex-col border-l border-gray-200 bg-white"
+            onClick={(event) => event.stopPropagation()}
           >
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-secondary/70">
-                Transaction Details
-              </p>
-              <h3 className="mt-1 font-display text-2xl text-ink">
-                {selectedEvent.event_type} on {selectedEvent.site}
-              </h3>
-              <p className="mt-1 text-sm text-slate">
-                Event-chain hashes prove integrity. Prompt/response hashes are one-way
-                fingerprints; the original value is only visible when full-content capture was
-                enabled before the event was recorded.
-              </p>
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-6 py-4">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold text-gray-900">
+                  {selected.event_type} · {siteLabel(selected.site)}
+                </h2>
+                <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                  {fullDateFormatter.format(new Date(selected.captured_at))}
+                  <DecisionTag decision={selected.decision} />
+                  <span className={TAG}>{hasFullContent(selected) ? "Full content" : "Hash only"}</span>
+                  <span className="inline-flex items-center gap-1 font-mono">
+                    {selected.event_id}
+                    <CopyButton value={selected.event_id} label="Copy event ID" />
+                  </span>
+                </p>
+              </div>
+              <button type="button" className={BTN_SECONDARY} onClick={() => setSelected(null)}>
+                Close
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setSelectedEvent(null)}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-secondary/15 text-slate transition hover:bg-secondary/5"
-              aria-label="Close transaction details"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
 
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <DetailRow label="Event ID" value={selectedEvent.event_id} mono />
-            <DetailRow label="Captured" value={new Date(selectedEvent.captured_at).toLocaleString()} />
-            <DetailRow label="User" value={userLabel(selectedEvent)} />
-            <DetailRow label="Device" value={selectedEvent.device_id} mono />
-            <DetailRow label="URL" value={selectedEvent.url} mono />
-            <DetailRow label="Decision" value={selectedEvent.decision || "-"} />
-            <DetailRow label="Transaction hash" value={transactionHash(selectedEvent)} mono />
-            <DetailRow label="Event-chain hash" value={selectedEvent.event_hash} mono />
-            <DetailRow label="Previous chain hash" value={selectedEvent.prev_event_hash} mono />
-            <DetailRow label="Prompt length" value={promptLength(selectedEvent)} />
-            <DetailRow label="Response length" value={responseLength(selectedEvent)} />
-            <DetailRow
-              label="Capture"
-              value={hasFullContent(selectedEvent) ? "full_content" : "metadata_only"}
-            />
-          </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <KeyValue label="User">{userLabel(selected)}</KeyValue>
+                <KeyValue label="Device">
+                  <span className="break-all font-mono text-xs">{selected.device_id}</span>
+                </KeyValue>
+                <KeyValue label="URL">
+                  <span className="break-all font-mono text-xs">{selected.url}</span>
+                </KeyValue>
+                <KeyValue label="Prompt length">
+                  {selected.prompt_len ?? payloadNumber(selected, "prompt_text_len") ?? "—"}
+                </KeyValue>
+                <KeyValue label="Response length">
+                  {selected.response_len ?? payloadNumber(selected, "response_text_len") ?? "—"}
+                </KeyValue>
+                {!(selected.message && selected.decision && selected.decision !== "allow") && (
+                  <KeyValue label="Message">{selected.message || "—"}</KeyValue>
+                )}
+              </div>
 
-          <div className="mt-5 grid gap-5 lg:grid-cols-2">
-            <div className="space-y-4">
-              <ContentBlock label="Prompt Text" value={payloadString(selectedEvent, "prompt_text")} />
-              <ContentBlock
-                label="Response Text"
-                value={payloadString(selectedEvent, "response_text")}
-              />
-              <ContentBlock
-                label="User Justification"
-                value={payloadString(selectedEvent, "user_justification")}
-              />
+              {selected.message && selected.decision && selected.decision !== "allow" && (
+                <InlineNotice tone={selected.decision === "block" ? "error" : "info"}>
+                  <span className="font-medium">{DECISION_META[selected.decision]?.label ?? selected.decision}:</span>{" "}
+                  {selected.message}
+                </InlineNotice>
+              )}
 
-              {!hasFullContent(selectedEvent) ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                  <p className="font-semibold">Original content is not stored for this event.</p>
-                  <p className="mt-1">
-                    This event was captured in metadata-only mode. The hash cannot be decoded or
-                    reversed; it can only be compared against the same original text hashed again.
-                    Use full-content capture only if the deployment policy allows storing prompts
-                    and responses.
-                  </p>
+              <ContentBlock label="Prompt" value={payloadString(selected, "prompt_text")} />
+              <ContentBlock label="Response" value={payloadString(selected, "response_text")} />
+              <ContentBlock label="User justification" value={payloadString(selected, "user_justification")} />
+
+              {!hasFullContent(selected) && (
+                <InlineNotice tone="info">
+                  This event was captured in metadata-only mode: prompt and response are stored as one-way hashes and
+                  cannot be recovered. Enable full-content capture in the extension policy if the deployment allows
+                  storing content.
+                </InlineNotice>
+              )}
+
+              <SectionCard title="Integrity" description="Each event is chained to the previous one; a valid chain proves nothing was altered or removed.">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <KeyValue label="Chain">
+                    {selected.chain_valid ? (
+                      <span className="font-medium text-emerald-700">Valid</span>
+                    ) : (
+                      <span className="font-medium text-red-700">Broken{selected.chain_error ? ` — ${selected.chain_error}` : ""}</span>
+                    )}
+                  </KeyValue>
+                  <KeyValue label="Transaction hash">
+                    <span className="break-all font-mono text-xs">{transactionHash(selected) ?? "—"}</span>
+                  </KeyValue>
+                  <KeyValue label="Event hash">
+                    <span className="break-all font-mono text-xs">{selected.event_hash}</span>
+                  </KeyValue>
+                  <KeyValue label="Previous event hash">
+                    <span className="break-all font-mono text-xs">{selected.prev_event_hash ?? "—"}</span>
+                  </KeyValue>
+                  <KeyValue label="Prompt hash">
+                    <span className="break-all font-mono text-xs">
+                      {selected.prompt_hash || payloadString(selected, "prompt_text_hash") || "—"}
+                    </span>
+                  </KeyValue>
+                  <KeyValue label="Response hash">
+                    <span className="break-all font-mono text-xs">
+                      {selected.response_hash || payloadString(selected, "response_text_hash") || "—"}
+                    </span>
+                  </KeyValue>
                 </div>
-              ) : null}
+              </SectionCard>
 
-              <div className="grid gap-3 md:grid-cols-2">
-                <DetailRow
-                  label="Prompt text hash"
-                  value={selectedEvent.prompt_hash || payloadString(selectedEvent, "prompt_text_hash")}
-                  mono
-                />
-                <DetailRow
-                  label="Response text hash"
-                  value={
-                    selectedEvent.response_hash ||
-                    payloadString(selectedEvent, "response_text_hash")
-                  }
-                  mono
-                />
-                <DetailRow
-                  label="Justification hash"
-                  value={payloadString(selectedEvent, "user_justification_hash")}
-                  mono
-                />
-                <DetailRow label="Message" value={selectedEvent.message || "-"} />
+              <div>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-sm font-medium text-gray-700 hover:text-gray-900"
+                  onClick={() => setRawOpen((open) => !open)}
+                  aria-expanded={rawOpen}
+                >
+                  {rawOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                  Raw payload
+                </button>
+                {rawOpen && (
+                  <pre className="mt-2 max-h-[420px] overflow-auto rounded bg-gray-50 px-4 py-3 font-mono text-xs leading-5 text-gray-700">
+                    {JSON.stringify(selected.payload, null, 2)}
+                  </pre>
+                )}
               </div>
             </div>
-
-            <div className="space-y-2">
-              <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-slate/60">
-                Raw Payload JSON
-              </p>
-              <pre className="max-h-[520px] overflow-auto rounded-2xl border border-secondary/10 bg-slate/5 p-3 text-xs leading-5 text-ink">
-                {JSON.stringify(selectedEvent.payload, null, 2)}
-              </pre>
-            </div>
-          </div>
           </aside>
         </div>
-      ) : null}
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
-          <h3 className="font-semibold text-ink">Top Sites (14d)</h3>
-          <div className="mt-3 space-y-2">
-            {topSites.length === 0 ? (
-              <p className="text-sm text-slate">No site activity yet.</p>
-            ) : (
-              topSites.map(([site, count]) => (
-                <div
-                  key={site}
-                  className="flex items-center justify-between rounded-xl border border-secondary/10 px-3 py-2 text-sm"
-                >
-                  <span className="text-slate">{site}</span>
-                  <span className="font-semibold text-secondary">{count}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
-          <h3 className="font-semibold text-ink">Daily Event Volume (14d)</h3>
-          <div className="mt-3 space-y-2">
-            {summary?.daily?.length ? (
-              summary.daily.slice(-7).map((item) => (
-                <div
-                  key={item.day}
-                  className="flex items-center justify-between rounded-xl border border-secondary/10 px-3 py-2 text-sm"
-                >
-                  <span className="text-slate">{item.day}</span>
-                  <span className="font-semibold text-secondary">{item.count}</span>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-slate">No daily data yet.</p>
-            )}
-          </div>
-        </div>
-      </section>
+      )}
     </div>
   );
 }

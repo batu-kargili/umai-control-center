@@ -1,66 +1,62 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { useConsole } from "src/app/(console)/console-context";
 import {
   fetchAlerts,
   fetchAuditEvents,
-  fetchGuardrailVersions,
+  fetchEnvironments,
   fetchGuardrails,
   fetchPolicies,
   fetchProjects,
   type Project,
 } from "src/lib/api";
-import {
-  Activity,
-  Bell,
-  ChevronRight,
-  FileText,
-  FlaskConical,
-  Folder,
-  Shield,
-} from "lucide-react";
 
-const ALERT_COUNT_LIMIT = 500;
-const AUDIT_EVENT_LIMIT = 500;
 const numberFormatter = new Intl.NumberFormat("en-US");
+
+// Alerts ve audit endpoint'lerinin sayacı yok; en yeni N kayıt çekilip 24 saatlik
+// pencere sayılır. Pencere tamamen 24 saat içindeyse gerçek sayı daha büyük
+// olabilir, o durumda "N+" gösterilir.
+const ALERT_FETCH_LIMIT = 250;
+const AUDIT_FETCH_LIMIT = 500;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 type PageProps = {
   params: { envId: string };
 };
 
-type EnvironmentMetrics = {
+interface ProjectRow {
+  project: Project;
   guardrails: number;
   policies: number;
-  tests: number;
-  alerts: number;
-  recentOps: number;
-};
+  alerts24h: number;
+}
 
-const EMPTY_METRICS: EnvironmentMetrics = {
-  guardrails: 0,
-  policies: 0,
-  tests: 0,
-  alerts: 0,
-  recentOps: 0,
-};
+function formatCount(value: number, capped = false) {
+  return capped ? `${numberFormatter.format(value)}+` : numberFormatter.format(value);
+}
+
+function countSince(items: Array<{ created_at: string }>, since: number) {
+  return items.filter((item) => Date.parse(item.created_at) >= since).length;
+}
 
 export default function EnvironmentDetailPage({ params }: PageProps) {
+  const router = useRouter();
   const { setSelectedEnvironment, tenantId } = useConsole();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [metrics, setMetrics] = useState<EnvironmentMetrics>(EMPTY_METRICS);
+  const [envName, setEnvName] = useState<string | null>(null);
+  const [rows, setRows] = useState<ProjectRow[]>([]);
+  const [audit24h, setAudit24h] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const envName = params.envId.replace(/-/g, " ");
 
   useEffect(() => {
     setSelectedEnvironment(params.envId);
 
     if (!tenantId) {
-      setProjects([]);
-      setMetrics(EMPTY_METRICS);
-      setError(null);
+      setRows([]);
       setLoading(false);
       return;
     }
@@ -71,149 +67,52 @@ export default function EnvironmentDetailPage({ params }: PageProps) {
       setError(null);
 
       try {
-        const [projectsResult, auditResult] = await Promise.allSettled([
+        const since = Date.now() - DAY_MS;
+        let partial = false;
+        const markPartial = <T,>(fallback: T) => () => {
+          partial = true;
+          return fallback;
+        };
+
+        const [environments, projectList, auditEvents] = await Promise.all([
+          fetchEnvironments(tenantId).catch(markPartial([])),
           fetchProjects(tenantId, params.envId),
           fetchAuditEvents(tenantId, {
             environment_id: params.envId,
-            limit: AUDIT_EVENT_LIMIT,
-          }),
+            limit: AUDIT_FETCH_LIMIT,
+          }).catch(markPartial([])),
         ]);
 
-        if (!active) {
-          return;
-        }
-
-        if (projectsResult.status === "rejected") {
-          console.error(projectsResult.reason);
-          setProjects([]);
-          setMetrics(EMPTY_METRICS);
-          setError("Unable to load environment data right now.");
-          return;
-        }
-
-        const projectList = projectsResult.value;
-        setProjects(projectList);
-
-        let nextError: string | null =
-          auditResult.status === "rejected"
-            ? "Some environment activity could not be loaded right now."
-            : null;
-
-        if (projectList.length === 0) {
-          setMetrics({
-            ...EMPTY_METRICS,
-            recentOps: auditResult.status === "fulfilled" ? auditResult.value.length : 0,
-          });
-          setError(nextError);
-          return;
-        }
-
-        const guardrailResults = await Promise.allSettled(
-          projectList.map((project) => fetchGuardrails(tenantId, params.envId, project.project_id))
+        const projectRows = await Promise.all(
+          projectList.map(async (project): Promise<ProjectRow> => {
+            const [guardrails, policies, alerts] = await Promise.all([
+              fetchGuardrails(tenantId, params.envId, project.project_id)
+                .then((items) => items.length)
+                .catch(markPartial(0)),
+              fetchPolicies(tenantId, params.envId, project.project_id)
+                .then((items) => items.length)
+                .catch(markPartial(0)),
+              fetchAlerts(tenantId, params.envId, project.project_id, ALERT_FETCH_LIMIT)
+                .catch(markPartial([])),
+            ]);
+            return { project, guardrails, policies, alerts24h: countSince(alerts, since) };
+          })
         );
 
-        if (!active) {
-          return;
-        }
-
-        const guardrailRecords: Array<{ projectId: string; guardrailId: string }> = [];
-        guardrailResults.forEach((result, index) => {
-          if (result.status === "fulfilled") {
-            result.value.forEach((guardrail) => {
-              guardrailRecords.push({
-                projectId: projectList[index].project_id,
-                guardrailId: guardrail.guardrail_id,
-              });
-            });
-            return;
-          }
-
-          console.error(result.reason);
-          nextError = "Some environment metrics could not be loaded right now.";
-        });
-
-        const [policyResults, alertResults, versionResults] = await Promise.all([
-          Promise.allSettled(
-            projectList.map((project) => fetchPolicies(tenantId, params.envId, project.project_id))
-          ),
-          Promise.allSettled(
-            projectList.map((project) =>
-              fetchAlerts(tenantId, params.envId, project.project_id, ALERT_COUNT_LIMIT)
-            )
-          ),
-          Promise.allSettled(
-            guardrailRecords.map((guardrail) =>
-              fetchGuardrailVersions(
-                tenantId,
-                params.envId,
-                guardrail.projectId,
-                guardrail.guardrailId
-              )
-            )
-          ),
-        ]);
-
-        if (!active) {
-          return;
-        }
-
-        const policyIds = new Set<string>();
-        policyResults.forEach((result) => {
-          if (result.status === "fulfilled") {
-            result.value.forEach((policy) => {
-              policyIds.add(policy.policy_id);
-            });
-            return;
-          }
-
-          console.error(result.reason);
-          nextError = "Some environment metrics could not be loaded right now.";
-        });
-
-        const alertIds = new Set<string>();
-        alertResults.forEach((result) => {
-          if (result.status === "fulfilled") {
-            result.value.forEach((alert) => {
-              alertIds.add(alert.id);
-            });
-            return;
-          }
-
-          console.error(result.reason);
-          nextError = "Some environment metrics could not be loaded right now.";
-        });
-
-        const testTargets = versionResults.reduce((total, result) => {
-          if (result.status === "fulfilled") {
-            return total + result.value.length;
-          }
-
-          console.error(result.reason);
-          nextError = "Some environment metrics could not be loaded right now.";
-          return total;
-        }, 0);
-
-        setMetrics({
-          guardrails: guardrailRecords.length,
-          policies: policyIds.size,
-          tests: testTargets,
-          alerts: alertIds.size,
-          recentOps: auditResult.status === "fulfilled" ? auditResult.value.length : 0,
-        });
-        setError(nextError);
+        if (!active) return;
+        setEnvName(
+          environments.find((env) => env.environment_id === params.envId)?.name ?? null
+        );
+        setRows(projectRows);
+        setAudit24h(countSince(auditEvents, since));
+        setError(partial ? "Some metrics could not be loaded." : null);
       } catch (err) {
-        if (!active) {
-          return;
-        }
-
+        if (!active) return;
         console.error(err);
-        setProjects([]);
-        setMetrics(EMPTY_METRICS);
+        setRows([]);
         setError("Unable to load environment data right now.");
       } finally {
-        if (active) {
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     };
 
@@ -224,173 +123,143 @@ export default function EnvironmentDetailPage({ params }: PageProps) {
   }, [params.envId, setSelectedEnvironment, tenantId]);
 
   const projectsHref = `/environments/${params.envId}/projects`;
-  const firstProjectId = projects[0]?.project_id;
-  const capabilityHref = (segment: "guardrails" | "policies" | "test" | "alerts") =>
+  const firstProjectId = rows[0]?.project.project_id;
+  const capabilityHref = (segment: "guardrails" | "policies" | "alerts") =>
     firstProjectId
       ? `/environments/${params.envId}/projects/${firstProjectId}/${segment}`
       : projectsHref;
 
-  const sections = useMemo(
-    () => [
-      {
-        title: "PROJECTS",
-        count: projects.length,
-        action: "Access Projects",
-        href: projectsHref,
-        icon: Folder,
-        color: "text-secondary",
-        bg: "bg-secondary/10",
-      },
-      {
-        title: "GUARDRAILS",
-        count: metrics.guardrails,
-        action: "Access Guardrails",
-        href: capabilityHref("guardrails"),
-        icon: Shield,
-        color: "text-secondary",
-        bg: "bg-secondary/10",
-      },
-      {
-        title: "POLICIES",
-        count: metrics.policies,
-        action: "Access Policies",
-        href: capabilityHref("policies"),
-        icon: FileText,
-        color: "text-secondary",
-        bg: "bg-secondary/10",
-      },
-      {
-        title: "TEST",
-        count: metrics.tests,
-        action: "Access Test",
-        href: capabilityHref("test"),
-        icon: FlaskConical,
-        color: "text-secondary",
-        bg: "bg-secondary/10",
-      },
-      {
-        title: "ALERTS",
-        count: metrics.alerts,
-        action: "Access Alerts",
-        href: capabilityHref("alerts"),
-        icon: Bell,
-        color: "text-secondary",
-        bg: "bg-secondary/10",
-      },
-    ],
-    [
-      firstProjectId,
-      metrics.alerts,
-      metrics.guardrails,
-      metrics.policies,
-      metrics.tests,
-      params.envId,
-      projects.length,
-      projectsHref,
-    ]
-  );
+  const totals = {
+    guardrails: rows.reduce((sum, row) => sum + row.guardrails, 0),
+    policies: rows.reduce((sum, row) => sum + row.policies, 0),
+    alerts24h: rows.reduce((sum, row) => sum + row.alerts24h, 0),
+    alertsCapped: rows.some((row) => row.alerts24h >= ALERT_FETCH_LIMIT),
+  };
 
-  const statusLabel = loading ? "Syncing" : error ? "Partial Data" : "Live Status";
-  const statusClassName = error
-    ? "bg-amber-500 shadow-sm"
-    : "bg-secondary shadow-accent";
+  const stats = [
+    { label: "Projects", value: formatCount(rows.length), href: projectsHref },
+    { label: "Guardrails", value: formatCount(totals.guardrails), href: capabilityHref("guardrails") },
+    { label: "Policies", value: formatCount(totals.policies), href: capabilityHref("policies") },
+    {
+      label: "Alerts (24h)",
+      value: formatCount(totals.alerts24h, totals.alertsCapped),
+      href: capabilityHref("alerts"),
+    },
+    {
+      label: "Audit events (24h)",
+      value: formatCount(audit24h, audit24h >= AUDIT_FETCH_LIMIT),
+      href: "/events",
+    },
+  ];
+
+  const title = envName ?? params.envId;
+  const summary = [
+    envName && envName !== params.envId && `ID: ${params.envId}`,
+    !loading && `${rows.length} ${rows.length === 1 ? "project" : "projects"}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div className="space-y-10 animate-in fade-in duration-700">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-secondary/70">
-            SELECTED SCOPE
-          </p>
-          <h2 className="text-4xl font-bold text-gray-900 capitalize tracking-tight">
-            {envName} Environment
-          </h2>
-          <p className="mt-1 text-sm text-gray-500">
-            System governance and security controls for the {envName} infrastructure.
-          </p>
-          {error && <p className="mt-2 text-xs text-amber-600">{error}</p>}
-        </div>
-        <div className="flex items-center gap-3">
-          <span
-            className={`flex items-center gap-2 rounded-full px-4 py-1.5 text-[11px] font-bold text-white transition-all ${statusClassName}`}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-            {statusLabel}
-          </span>
-          <span className="flex items-center gap-2 rounded-full border border-secondary/15 bg-white px-4 py-1.5 text-[11px] font-bold text-gray-900 shadow-sm">
-            <Activity className="h-3 w-3 text-secondary" />
-            {loading ? "Loading activity" : `${numberFormatter.format(metrics.recentOps)} recent ops`}
-          </span>
-        </div>
+    <div className="space-y-8">
+      <header className="border-b border-gray-200 pb-5">
+        <p className="text-xs font-medium text-gray-500">Environment</p>
+        <h1 className="mt-0.5 text-2xl font-semibold text-gray-900">{title}</h1>
+        {summary && <p className="mt-1 text-sm text-gray-500">{summary}</p>}
+        {error && <p className="mt-2 text-sm text-amber-700">{error}</p>}
       </header>
 
-      <section>
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-3 lg:grid-cols-5">
-          {sections.map((section) => (
-            <div
-              key={section.title}
-              className="group rounded-xl border border-secondary/10 bg-white p-6 shadow-sm transition-all hover:border-secondary/25 hover:shadow-accent"
-            >
-              <div className="mb-4 flex items-center justify-between">
-                <p className="text-[10px] font-bold tracking-widest text-gray-400">
-                  {section.title}
-                </p>
-                <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-xl ${section.bg} ${section.color}`}
-                >
-                  <section.icon className="h-4 w-4" />
-                </div>
-              </div>
-              <p className="text-3xl font-bold text-gray-900">
-                {loading ? "-" : numberFormatter.format(section.count)}
-              </p>
-              <Link
-                href={section.href}
-                className="mt-6 flex items-center gap-1 text-[11px] font-bold text-secondary hover:underline"
-              >
-                {section.action} <ChevronRight className="h-3 w-3" />
-              </Link>
-            </div>
-          ))}
-        </div>
+      <section className="grid grid-cols-1 divide-y divide-gray-200 rounded border border-gray-200 bg-white sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+        {stats.map((item) => (
+          <Link
+            key={item.label}
+            href={item.href}
+            className="px-5 py-4 transition-colors hover:bg-gray-50"
+          >
+            <p className="text-xs font-medium text-gray-500">{item.label}</p>
+            <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">
+              {loading ? "—" : item.value}
+            </p>
+          </Link>
+        ))}
       </section>
 
-      <section className="space-y-6">
-        <h3 className="text-lg font-bold text-gray-800">Select a Project</h3>
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-          {loading ? (
-            <div className="col-span-full animate-pulse py-12 text-center text-gray-400">
-              Loading projects...
-            </div>
-          ) : projects.length === 0 ? (
-            <div className="col-span-full py-12 text-center text-gray-400">
-              No projects found.
-            </div>
-          ) : (
-            projects.map((project) => (
-              <Link
-                key={project.project_id}
-                href={`/environments/${params.envId}/projects/${project.project_id}`}
-                className="group rounded-xl border border-secondary/10 bg-white p-6 shadow-sm transition-all hover:border-secondary/25 hover:shadow-accent"
-              >
-                <div className="mb-4 flex items-center justify-between">
-                  <div className="h-2 w-2 rounded-full bg-green-500" />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-secondary/70">
-                    PROD
-                  </span>
-                </div>
-                <h4 className="text-lg font-bold uppercase text-gray-900 transition-colors group-hover:text-secondary">
-                  {project.name}
-                </h4>
-                <p className="mt-1 text-[10px] uppercase tracking-wider text-gray-400">
-                  ID: {project.project_id}
-                </p>
-                <div className="mt-6 flex items-center gap-1 text-[11px] font-bold text-secondary transition-transform group-hover:translate-x-1">
-                  Enter Workspace <ChevronRight className="h-3 w-3" />
-                </div>
-              </Link>
-            ))
-          )}
+      <section>
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-base font-semibold text-gray-900">Projects</h2>
+          <Link href={projectsHref} className="text-sm font-medium text-secondary hover:underline">
+            Manage projects
+          </Link>
+        </div>
+        <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Project</th>
+                <th className="px-4 py-2.5 text-right font-medium">Guardrails</th>
+                <th className="px-4 py-2.5 text-right font-medium">Policies</th>
+                <th className="px-4 py-2.5 text-right font-medium">Alerts (24h)</th>
+                <th className="w-10 px-2 py-2.5" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                    Loading projects…
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                    No projects in this environment.{" "}
+                    <Link href={projectsHref} className="font-medium text-secondary hover:underline">
+                      Create one
+                    </Link>{" "}
+                    to start configuring guardrails.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((row) => {
+                  const projectHref = `/environments/${params.envId}/projects/${row.project.project_id}`;
+                  return (
+                    <tr
+                      key={row.project.project_id}
+                      onClick={() => router.push(projectHref)}
+                      className="cursor-pointer transition-colors hover:bg-gray-50"
+                    >
+                      <td className="px-4 py-3">
+                        <Link
+                          href={projectHref}
+                          onClick={(event) => event.stopPropagation()}
+                          className="font-medium text-gray-900 hover:text-secondary"
+                        >
+                          {row.project.name}
+                        </Link>
+                        {row.project.project_id !== row.project.name && (
+                          <span className="ml-2 font-mono text-xs text-gray-400">
+                            {row.project.project_id}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                        {formatCount(row.guardrails)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                        {formatCount(row.policies)}
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                        {formatCount(row.alerts24h, row.alerts24h >= ALERT_FETCH_LIMIT)}
+                      </td>
+                      <td className="px-2 py-3 text-gray-400">
+                        <ChevronRight className="h-4 w-4" />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
     </div>

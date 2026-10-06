@@ -197,18 +197,27 @@ export function slugify(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+const TARGET_LABELS: Record<string, string> = {
+  LAST_MESSAGE: "the last message",
+  FULL_HISTORY: "the full conversation",
+  ATTACHMENTS: "attachments",
+  FULL_CONTEXT: "the full context",
+};
+
 export function summarizePolicy(policy: Policy): string {
+  const target =
+    typeof policy.config?.target === "string"
+      ? TARGET_LABELS[policy.config.target] ?? policy.config.target
+      : TARGET_LABELS.LAST_MESSAGE;
   if (policy.type === "HEURISTIC") {
     const rules = Array.isArray(policy.config?.rules) ? policy.config.rules.length : 0;
-    const target =
-      typeof policy.config?.target === "string" ? String(policy.config.target) : "LAST_MESSAGE";
-    return `${rules} rule${rules === 1 ? "" : "s"} running on ${target}.`;
+    return `${rules} pattern rule${rules === 1 ? "" : "s"} evaluated against ${target}.`;
   }
   const confidence =
     typeof policy.config?.min_confidence_for_block === "string"
       ? String(policy.config.min_confidence_for_block)
       : "medium";
-  return `AI-assisted review with ${confidence} confidence threshold for blocking.`;
+  return `LLM classification of ${target}; blocks at ${confidence} confidence or higher.`;
 }
 
 export function formatScope(scope: PolicyScope | undefined): string {

@@ -1,381 +1,331 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useUser } from "src/lib/auth-client";
+import { useEffect, useState } from "react";
+import { Check, Copy, Plus } from "lucide-react";
 import { useConsole } from "src/app/(console)/console-context";
-import { createApiKey, fetchApiKeys, revokeApiKey } from "src/lib/api";
-import { Copy, ExternalLink, KeyRound, ShieldCheck, Trash2 } from "lucide-react";
+import { createApiKey, fetchApiKeys, revokeApiKey, type ApiKeyResponse } from "src/lib/api";
+import {
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  ConfirmDialog,
+  EmptyState,
+  INPUT,
+  InlineNotice,
+  LABEL,
+  TAG,
+  TAG_GREEN,
+} from "src/app/(console)/console-ui";
 
-interface ApiKeyRow {
-  id: string;
-  name: string;
-  api_key?: string | null;
-  key_preview?: string | null;
-  created_at: string;
-  created_by: string;
-  revoked?: boolean;
-}
+const dateFormatter = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
 
-const maskKey = (value?: string | null) => {
-  if (!value) return "—";
-  if (value.length <= 8) return value;
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
-};
+const formatDate = (value: string | null | undefined) =>
+  value ? dateFormatter.format(new Date(value)) : "—";
 
 export default function ApiKeysPage() {
   const { tenantId } = useConsole();
   const { envId, projectId } = useParams() as { envId: string; projectId: string };
-  const { user } = useUser();
 
-  const [keyName, setKeyName] = useState("");
-  const [keys, setKeys] = useState<ApiKeyRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [keys, setKeys] = useState<ApiKeyResponse[]>([]);
   const [listLoading, setListLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalStep, setModalStep] = useState<"create" | "show">("create");
-  const [newKey, setNewKey] = useState<ApiKeyRow | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const createdBy = useMemo(() => {
-    return user?.name || user?.email || "Current user";
-  }, [user]);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [keyName, setKeyName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [newKey, setNewKey] = useState<ApiKeyResponse | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const [pendingRevoke, setPendingRevoke] = useState<ApiKeyResponse | null>(null);
+  const [revoking, setRevoking] = useState(false);
 
   useEffect(() => {
     if (!tenantId) return;
     let active = true;
-    const load = async () => {
-      setListLoading(true);
-      try {
-        const result = await fetchApiKeys(tenantId, envId, projectId);
+    setListLoading(true);
+    fetchApiKeys(tenantId, envId, projectId)
+      .then((result) => {
         if (!active) return;
-        setKeys(
-          result.map((item) => ({
-            id: item.id,
-            name: item.name || "API key",
-            api_key: null,
-            key_preview: item.key_preview || null,
-            created_at: item.created_at || new Date().toISOString(),
-            created_by: "—",
-            revoked: item.revoked ?? false,
-          }))
-        );
-      } catch (err) {
-        if (!active) return;
-        setError("Unable to load API keys.");
-      } finally {
+        setKeys(result);
+        setError(null);
+      })
+      .catch((err) => {
+        console.error(err);
+        if (active) setError("Unable to load API keys.");
+      })
+      .finally(() => {
         if (active) setListLoading(false);
-      }
-    };
-
-    load();
+      });
     return () => {
       active = false;
     };
   }, [tenantId, envId, projectId]);
 
-  const handleCreateKey = async () => {
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const openCreate = () => {
+    setKeyName("");
+    setCreateError(null);
+    setNewKey(null);
+    setCreateOpen(true);
+  };
+
+  const closeCreate = () => {
+    if (creating) return;
+    setCreateOpen(false);
+    setNewKey(null);
+  };
+
+  const handleCreate = async () => {
     if (!tenantId) return;
-    setError(null);
-    setLoading(true);
+    setCreating(true);
+    setCreateError(null);
     try {
-      const result = await createApiKey({
+      const created = await createApiKey({
         tenant_id: tenantId,
         environment_id: envId,
         project_id: projectId,
         name: keyName.trim() || undefined,
       });
-      const name = keyName.trim() || `Project key ${keys.length + 1}`;
-      const now = result.created_at || new Date().toISOString();
-      const createdKey: ApiKeyRow = {
-        id: result.id,
-        name,
-        api_key: result.api_key,
-        key_preview: result.key_preview || null,
-        created_at: now,
-        created_by: createdBy,
-        revoked: result.revoked ?? false,
-      };
-      setKeys((prev) => [createdKey, ...prev]);
-      setNewKey(createdKey);
-      setModalStep("show");
-      setKeyName("");
+      setKeys((current) => [created, ...current]);
+      setNewKey(created);
     } catch (err) {
-      setError("Unable to create API key. Please try again.");
+      console.error(err);
+      setCreateError("The key could not be created.");
     } finally {
-      setLoading(false);
+      setCreating(false);
     }
   };
 
-  const handleCopy = async (row: ApiKeyRow) => {
-    if (!row.api_key) return;
-    await navigator.clipboard.writeText(row.api_key);
-    setCopiedId(row.id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const handleRevoke = async (row: ApiKeyRow) => {
-    if (!tenantId) return;
-    if (!confirm("Revoke this API key? This action cannot be undone.")) return;
+  const confirmRevoke = async () => {
+    if (!tenantId || !pendingRevoke) return;
+    setRevoking(true);
     try {
-      const result = await revokeApiKey(tenantId, row.id);
-      setKeys((prev) =>
-        prev.map((item) =>
-          item.id === row.id
-            ? { ...item, revoked: result.revoked ?? true }
-            : item
-        )
+      const result = await revokeApiKey(tenantId, pendingRevoke.id);
+      setKeys((current) =>
+        current.map((item) => (item.id === result.id ? { ...item, revoked: result.revoked ?? true } : item))
       );
+      setPendingRevoke(null);
     } catch (err) {
-      setError("Unable to revoke API key.");
+      console.error(err);
+      setError("The key could not be revoked.");
+      setPendingRevoke(null);
+    } finally {
+      setRevoking(false);
     }
   };
 
-  const openCreateModal = () => {
-    setError(null);
-    setModalStep("create");
-    setNewKey(null);
-    setModalOpen(true);
-  };
-
-  const closeModal = () => {
-    if (loading) return;
-    setModalOpen(false);
-  };
-
-  const handleCopyNewKey = async () => {
-    if (!newKey?.api_key) return;
-    await navigator.clipboard.writeText(newKey.api_key);
-    setCopiedId(newKey.id);
-  };
+  const activeCount = keys.filter((key) => !key.revoked).length;
+  const base = `/environments/${envId}/projects/${projectId}`;
 
   return (
-    <div className="space-y-8 fade-up">
-      <header className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">Security</p>
-          <h2 className="font-display text-4xl font-bold text-ink tracking-tight">API keys</h2>
-          <p className="mt-2 text-sm text-slate max-w-2xl">
-            You have permission to view and manage API keys for this project. Keys are shown once—store them securely.
+          <h1 className="text-2xl font-semibold text-gray-900">API keys</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            {listLoading ? "Loading…" : `${activeCount} active · ${keys.length - activeCount} revoked`} · {projectId}
           </p>
         </div>
-        <button
-          onClick={openCreateModal}
-          className="inline-flex items-center gap-2 rounded-xl bg-ink px-4 py-2 text-xs font-semibold text-white hover:bg-[#0b1322] disabled:opacity-60"
-        >
-          <KeyRound className="w-4 h-4" />
-          Create new secret key
+        <button type="button" className={BTN_PRIMARY} onClick={openCreate}>
+          <Plus className="h-4 w-4" /> Create API key
         </button>
       </header>
 
-      <section className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm space-y-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <ShieldCheck className="w-5 h-5" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-ink">Key management</p>
-              <p className="text-xs text-slate">
-                Create keys per project and keep them stored securely.
-              </p>
-            </div>
-          </div>
-        </div>
-        {error && !modalOpen && (
-          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-xs text-red-600">
-            {error}
-          </div>
-        )}
-      </section>
+      {error && (
+        <InlineNotice tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </InlineNotice>
+      )}
 
-      <section className="rounded-3xl border border-slate/10 bg-white shadow-sm">
-        <div className="border-b border-slate/10 px-6 py-4">
-          <div className="grid grid-cols-7 gap-4 text-[11px] font-semibold uppercase tracking-[0.25em] text-slate/60">
-            <span className="col-span-2">Name</span>
-            <span>Status</span>
-            <span>Secret key</span>
-            <span>Created</span>
-            <span>Last used</span>
-            <span>Created by</span>
-          </div>
-        </div>
-        <div className="divide-y divide-slate/10">
-          {keys.length === 0 ? (
-            <div className="px-6 py-10 text-sm text-slate">
-              {listLoading ? "Loading API keys..." : "No API keys created yet. Generate a new key to get started."}
-            </div>
-          ) : (
-            keys.map((row) => (
-              <div
-                key={row.id}
-                className="grid grid-cols-7 gap-4 px-6 py-4 items-center text-sm"
-              >
-                <div className="col-span-2">
-                  <p className="font-semibold text-ink">{row.name}</p>
-                </div>
-                <div className={`text-xs font-semibold ${row.revoked ? "text-slate" : "text-emerald-600"}`}>
-                  {row.revoked ? "Revoked" : "Active"}
-                </div>
-                <div className="text-xs font-mono text-slate">
-                  {maskKey(row.key_preview || row.api_key)}
-                </div>
-                <div className="text-xs text-slate">
-                  {new Date(row.created_at).toLocaleDateString()}
-                </div>
-                <div className="text-xs text-slate">—</div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-slate truncate max-w-[120px]">{row.created_by}</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleCopy(row)}
-                      className={`text-slate hover:text-ink ${row.api_key ? "" : "opacity-40 cursor-not-allowed"}`}
-                      title="Copy key"
-                      disabled={!row.api_key}
-                    >
-                      <Copy className="w-4 h-4" />
-                    </button>
-                    <button
-                      className={`text-slate hover:text-red-500 ${row.revoked ? "opacity-40 cursor-not-allowed" : ""}`}
-                      title="Revoke key"
-                      onClick={() => handleRevoke(row)}
-                      disabled={row.revoked}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-                {copiedId === row.id && (
-                  <div className="col-span-7 text-[10px] text-emerald-600 font-semibold">
-                    Key copied to clipboard.
-                  </div>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+      <InlineNotice tone="info">
+        Keys authenticate applications calling this project&apos;s guardrails; send them in the{" "}
+        <code className="font-mono text-xs">X-Umai-Api-Key</code> header. The secret is shown once, at creation.
+        See the{" "}
+        <Link href={`${base}/implementation`} className="font-medium text-secondary hover:underline">
+          Implementation
+        </Link>{" "}
+        page for examples.
+      </InlineNotice>
 
-      {modalOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center">
+      {!listLoading && keys.length === 0 ? (
+        <EmptyState>No API keys yet. Create one to connect an application.</EmptyState>
+      ) : (
+        <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Name</th>
+                <th className="px-4 py-2.5 font-medium">Key</th>
+                <th className="px-4 py-2.5 font-medium">Created</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="w-24 px-4 py-2.5 text-right font-medium">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {listLoading ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                    Loading API keys…
+                  </td>
+                </tr>
+              ) : (
+                keys.map((key) => (
+                  <tr key={key.id} className={key.revoked ? "text-gray-400" : ""}>
+                    <td className="px-4 py-3">
+                      <p className={`font-medium ${key.revoked ? "text-gray-500" : "text-gray-900"}`}>
+                        {key.name || "Untitled key"}
+                      </p>
+                      <p className="mt-0.5 font-mono text-xs text-gray-400">{key.id}</p>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-gray-600">{key.key_preview || "••••"}</td>
+                    <td className="whitespace-nowrap px-4 py-3 text-gray-600">{formatDate(key.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className={key.revoked ? TAG : TAG_GREEN}>{key.revoked ? "Revoked" : "Active"}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {!key.revoked && (
+                        <button
+                          type="button"
+                          className="font-medium text-red-700 hover:underline"
+                          onClick={() => setPendingRevoke(key)}
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {createOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4"
+          onClick={closeCreate}
+        >
           <div
-            className="absolute inset-0 bg-slate/60 backdrop-blur-sm"
-            onClick={closeModal}
-          />
-          <div className="relative w-full max-w-md rounded-2xl bg-white text-ink shadow-soft border border-slate/10">
-            {modalStep === "create" ? (
-              <div className="p-6 space-y-5">
-                <div>
-                  <h3 className="text-lg font-semibold">Create new secret key</h3>
-                  <p className="text-xs text-slate mt-2">
-                    This API key is tied to your user and can make requests against this project.
-                    If you are removed from the organization, this key will be disabled.
+            role="dialog"
+            aria-modal="true"
+            aria-label={newKey ? "Save your API key" : "Create API key"}
+            className="w-full max-w-lg rounded border border-gray-200 bg-white"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {!newKey ? (
+              <>
+                <div className="px-5 pt-5">
+                  <h2 className="text-base font-semibold text-gray-900">Create API key</h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Scoped to project <span className="font-mono text-xs">{projectId}</span> in environment{" "}
+                    <span className="font-mono text-xs">{envId}</span>. It can call every guardrail in this project.
                   </p>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-xs font-semibold text-slate">Owned by</label>
-                  <div className="inline-flex rounded-lg bg-slate/5 border border-slate/10 p-1 text-xs">
-                    <span className="px-3 py-1 rounded-md bg-ink text-white font-semibold">You</span>
-                    <span className="px-3 py-1 text-slate">Service account</span>
+                  <div className="mt-4">
+                    <label className={LABEL} htmlFor="api-key-name">
+                      Name <span className="font-normal text-gray-400">(optional)</span>
+                    </label>
+                    <input
+                      id="api-key-name"
+                      className={`${INPUT} mt-1`}
+                      value={keyName}
+                      onChange={(event) => setKeyName(event.target.value)}
+                      placeholder="e.g. Chatbot backend (prod)"
+                      autoFocus
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !creating) void handleCreate();
+                      }}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                      Name it after the application that will use it so revocation is easy later.
+                    </p>
                   </div>
+                  {createError && (
+                    <div className="mt-4">
+                      <InlineNotice tone="error">{createError}</InlineNotice>
+                    </div>
+                  )}
                 </div>
-
-                <div className="space-y-3">
-                  <label className="text-xs font-semibold text-slate">Name (optional)</label>
-                  <input
-                    value={keyName}
-                    onChange={(event) => setKeyName(event.target.value)}
-                    placeholder="My test key"
-                    className="w-full rounded-lg border border-slate/20 bg-white px-3 py-2 text-sm text-ink placeholder-slate/50 focus:outline-none focus:ring-2 focus:ring-accent/20"
-                  />
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-xs font-semibold text-slate">Project</label>
-                  <div className="rounded-lg border border-slate/10 bg-slate/5 px-3 py-2 text-sm text-ink">
-                    {projectId}
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <label className="text-xs font-semibold text-slate">Permissions</label>
-                  <div className="inline-flex rounded-lg bg-slate/5 border border-slate/10 p-1 text-xs">
-                    <span className="px-3 py-1 rounded-md bg-ink text-white font-semibold">All</span>
-                    <span className="px-3 py-1 text-slate">Restricted</span>
-                    <span className="px-3 py-1 text-slate">Read only</span>
-                  </div>
-                </div>
-
-                {error && (
-                  <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-600">
-                    {error}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-end gap-2 pt-2">
-                  <button
-                    onClick={closeModal}
-                    className="rounded-lg bg-slate/10 px-4 py-2 text-xs font-semibold text-slate hover:text-ink"
-                  >
+                <div className="mt-5 flex justify-end gap-2 border-t border-gray-200 px-5 py-3">
+                  <button type="button" className={BTN_SECONDARY} onClick={closeCreate} disabled={creating}>
                     Cancel
                   </button>
-                  <button
-                    onClick={handleCreateKey}
-                    disabled={loading}
-                    className="rounded-lg bg-ink px-4 py-2 text-xs font-semibold text-white hover:bg-[#0b1322] disabled:opacity-60"
-                  >
-                    {loading ? "Creating..." : "Create secret key"}
+                  <button type="button" className={BTN_PRIMARY} onClick={handleCreate} disabled={creating}>
+                    {creating ? "Creating…" : "Create key"}
                   </button>
                 </div>
-              </div>
+              </>
             ) : (
-              <div className="p-6 space-y-5">
-                <div>
-                  <h3 className="text-lg font-semibold">Save your key</h3>
-                  <p className="text-xs text-slate mt-2">
-                    Please save your secret key in a safe place since you will not be able to view it again.
-                    Keep it secure—anyone with this key can make requests on your behalf.
+              <>
+                <div className="px-5 pt-5">
+                  <h2 className="text-base font-semibold text-gray-900">Save your API key</h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    This is the only time the full key is shown. Store it in your secret manager now.
                   </p>
-                </div>
-
-                <a
-                  href="#"
-                  className="inline-flex items-center gap-1 text-xs text-slate hover:text-ink"
-                >
-                  Learn more about API key best practices <ExternalLink className="w-3 h-3" />
-                </a>
-
-                {newKey && (
-                  <div className="rounded-lg border border-slate/10 bg-slate/5 px-3 py-3 text-sm text-ink flex items-center justify-between gap-2">
-                    <code className="text-xs break-all">{newKey.api_key}</code>
+                  <div className="mt-4 flex items-start gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-3">
+                    <code className="min-w-0 flex-1 break-all font-mono text-xs text-gray-900">{newKey.api_key}</code>
                     <button
-                      onClick={handleCopyNewKey}
-                      className="inline-flex items-center gap-1 rounded-md bg-ink px-3 py-1.5 text-xs font-semibold text-white"
+                      type="button"
+                      className={`${BTN_SECONDARY} h-8 shrink-0 px-2.5`}
+                      onClick={() =>
+                        navigator.clipboard
+                          .writeText(newKey.api_key ?? "")
+                          .then(() => setCopied(true))
+                          .catch(() => {})
+                      }
                     >
-                      <Copy className="w-3 h-3" /> Copy
+                      {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+                      {copied ? "Copied" : "Copy"}
                     </button>
                   </div>
-                )}
-
-                <div className="text-xs text-slate">
-                  Permissions<br />
-                  <span className="text-ink">Read and write API resources</span>
+                  <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <dt className={LABEL}>Name</dt>
+                      <dd className="mt-0.5 text-gray-900">{newKey.name || "Untitled key"}</dd>
+                    </div>
+                    <div>
+                      <dt className={LABEL}>Header</dt>
+                      <dd className="mt-0.5 font-mono text-xs text-gray-900">X-Umai-Api-Key</dd>
+                    </div>
+                  </dl>
                 </div>
-
-                <div className="flex items-center justify-end">
-                  <button
-                    onClick={closeModal}
-                    className="rounded-lg bg-slate/10 px-4 py-2 text-xs font-semibold text-slate hover:text-ink"
-                  >
+                <div className="mt-5 flex justify-end border-t border-gray-200 px-5 py-3">
+                  <button type="button" className={BTN_PRIMARY} onClick={closeCreate}>
                     Done
                   </button>
                 </div>
-              </div>
+              </>
             )}
           </div>
         </div>
+      )}
+
+      {pendingRevoke && (
+        <ConfirmDialog
+          title="Revoke API key?"
+          confirmLabel="Revoke"
+          danger
+          busy={revoking}
+          onCancel={() => (revoking ? undefined : setPendingRevoke(null))}
+          onConfirm={confirmRevoke}
+          body={
+            <>
+              <p>
+                <span className="font-medium text-gray-900">{pendingRevoke.name || "Untitled key"}</span>{" "}
+                (<span className="font-mono text-xs">{pendingRevoke.key_preview}</span>) stops working immediately;
+                applications using it will receive 401 responses.
+              </p>
+              <p className="mt-2">This cannot be undone. Create a new key first if the application must keep running.</p>
+            </>
+          }
+        />
       )}
     </div>
   );

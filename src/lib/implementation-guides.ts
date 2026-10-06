@@ -1,55 +1,77 @@
+export type GuideKind = "rest" | "sdk" | "n8n" | "copilot";
+
 export type ImplementationGuideSummary = {
   slug: string;
   title: string;
   description: string;
   logo: string;
-  badge?: string;
+  category: string;
+  kind: GuideKind;
+  /** Runtime name recorded on the agent registry entry for SDK-based guides. */
+  runtime?: string;
 };
 
+// Kart sırası: en geniş kullanımdan en özel entegrasyona.
 export const implementationGuides: ImplementationGuideSummary[] = [
   {
-    slug: "umai-extention",
-    title: "UMAI Browser Extension",
-    description: "Govern ChatGPT, Gemini, and Claude usage directly in the browser.",
-    logo: "/assets/implementation/umai-extension.svg",
-    badge: "New",
+    slug: "rest-api",
+    title: "REST API",
+    description:
+      "Call the guard endpoint from any language before and after your model call. No SDK, two HTTP requests.",
+    logo: "/assets/implementation/rest-api.svg",
+    category: "Any stack",
+    kind: "rest",
   },
   {
     slug: "openai-agents-sdk",
     title: "OpenAI Agents SDK",
-    description: "Add async guardrails around agent runs and tool calls.",
+    description:
+      "Drop-in guardian for Agents SDK runs: prompt, every tool call and the final answer are checked automatically.",
     logo: "/assets/implementation/openai.svg",
-    badge: "Recommended",
+    category: "Python SDK",
+    kind: "sdk",
+    runtime: "openai-agents",
+  },
+  {
+    slug: "claude-agents",
+    title: "Claude Agents",
+    description:
+      "Anthropic Messages API tool-use loop with UMAI checks before the prompt, before each tool and after the answer.",
+    logo: "/assets/implementation/claude.svg",
+    category: "Python SDK",
+    kind: "sdk",
+    runtime: "anthropic",
   },
   {
     slug: "google-adk",
-    title: "Google ADK",
-    description: "Wrap ADK steps with UMAI checks and policy gates.",
+    title: "Google Agent Development Kit",
+    description:
+      "ADK callbacks route model and tool calls through UMAI; blocked calls are short-circuited inside the agent.",
     logo: "/assets/implementation/google-adk.svg",
+    category: "Python SDK",
+    kind: "sdk",
+    runtime: "google-adk",
   },
   {
-    slug: "microsoft-agt",
-    title: "Microsoft AGT",
-    description: "Use AGT as an internal support layer for action governance and OWASP controls.",
-    logo: "/assets/implementation/microsoft-agt.svg",
-    badge: "Governance",
+    slug: "n8n",
+    title: "n8n",
+    description:
+      "An HTTP Request node calls the guard endpoint and an IF node branches on the decision — no code.",
+    logo: "/assets/implementation/n8n.svg",
+    category: "Low-code",
+    kind: "n8n",
   },
   {
-    slug: "xai",
-    title: "xAI",
-    description: "Guard Grok-style agent flows with async policy evaluation.",
-    logo: "/assets/implementation/xai.svg",
-  },
-  {
-    slug: "claude",
-    title: "Claude",
-    description: "Add UMAI guardrails to Anthropic message workflows.",
-    logo: "/assets/implementation/claude.svg",
-  },
-  {
-    slug: "langchain",
-    title: "LangChain",
-    description: "Insert guardrails between chains, tools, and outputs.",
-    logo: "/assets/implementation/langchain.svg",
+    slug: "microsoft-copilot-studio",
+    title: "Microsoft Copilot Studio",
+    description:
+      "External threat detection provider: every tool call of a Copilot Studio agent is checked by UMAI before it runs.",
+    logo: "/assets/implementation/copilot-studio.svg",
+    category: "Microsoft",
+    kind: "copilot",
   },
 ];
+
+export function findGuide(slug: string) {
+  return implementationGuides.find((guide) => guide.slug === slug) ?? null;
+}

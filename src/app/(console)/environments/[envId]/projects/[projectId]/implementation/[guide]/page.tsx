@@ -1,319 +1,332 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { implementationGuides } from "src/lib/implementation-guides";
-import { ArrowLeft, BadgeCheck, Lightbulb } from "lucide-react";
+import { notFound, useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Check, Copy, KeyRound } from "lucide-react";
+import { useConsole } from "src/app/(console)/console-context";
+import {
+  createAgentBootstrapToken,
+  fetchGuardrails,
+  upsertAgentRegistry,
+  type AgentBootstrapTokenResponse,
+  type Guardrail,
+} from "src/lib/api";
+import { findGuide } from "src/lib/implementation-guides";
+import {
+  BTN_PRIMARY,
+  CopyButton,
+  INPUT,
+  InlineNotice,
+  LABEL,
+  SectionCard,
+  TAG,
+} from "src/app/(console)/console-ui";
+import { buildGuideContent, type GuideSnippet } from "../guide-content";
+import { useImplementationContext } from "../use-implementation-context";
 
-const guideContent: Record<
-  string,
-  {
-    tagline: string;
-    summary: string;
-    steps: string[];
-    codeLabel: string;
-    code: string;
-    note: string;
-  }
-> = {
-  "umai-extention": {
-    tagline: "Browser-native governance for ChatGPT, Gemini, and Claude",
-    summary:
-      "Deploy the UMAI extension with managed enterprise config so browser prompts and responses are governed before users submit content.",
-    steps: [
-      "Force-install the MV3 extension and push tenant config via managed browser policy.",
-      "Capture prompt attempts on supported domains and run local DLP plus policy checks.",
-      "Enforce allow, warn, block, redact, or justify decisions before submit.",
-      "Capture final assistant responses and batch upload tamper-evident ledger events.",
-    ],
-    codeLabel: "Pseudocode (TypeScript, MV3)",
-    code: `const cfg = await chrome.storage.managed.get([
-  "tenantId",
-  "policyUrl",
-  "ingestBaseUrl",
-  "deviceToken"
-]);
-
-const policy = await fetchPolicy(cfg.policyUrl);
-const prompt = adapter.getPromptText();
-const dlp = scanPrompt(prompt);
-const decision = evaluatePolicy({ prompt, dlp, policy });
-
-if (decision.type === "block") {
-  overlay.showBlocked(decision.message);
-  return;
+function CodeBlock({ snippet }: { snippet: GuideSnippet }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <div className="overflow-hidden rounded border border-gray-200">
+      <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2">
+        <span className="font-mono text-xs text-gray-600">{snippet.filename}</span>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 text-xs font-medium text-gray-600 hover:text-gray-900"
+          onClick={() =>
+            navigator.clipboard
+              .writeText(snippet.code)
+              .then(() => setCopied(true))
+              .catch(() => {})
+          }
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <pre className="max-h-[640px] overflow-auto bg-gray-900 px-4 py-4 font-mono text-xs leading-5 text-gray-100">
+        {snippet.code}
+      </pre>
+    </div>
+  );
 }
 
-const finalPrompt = decision.type === "redact"
-  ? applyRedactions(prompt, decision.redactions ?? [])
-  : prompt;
+export default function ImplementationGuidePage() {
+  const { envId, projectId, guide: slug } = useParams() as {
+    envId: string;
+    projectId: string;
+    guide: string;
+  };
+  const guide = findGuide(slug);
+  if (!guide) notFound();
 
-adapter.setPromptText(finalPrompt);
-adapter.submit();
+  const { tenantId } = useConsole();
+  const { ctx, update, ready } = useImplementationContext(envId, projectId);
+  const [guardrails, setGuardrails] = useState<Guardrail[]>([]);
+  const [activeSnippet, setActiveSnippet] = useState(0);
 
-queue.enqueue(buildLedgerEvents({ decision, prompt: finalPrompt }));`,
-    note: "Start with metadata-only capture mode, then enable encrypted full-content capture per tenant policy.",
-  },
-  "openai-agents-sdk": {
-    tagline: "Async guardrails around agent runs and tool calls",
-    summary:
-      "Wrap your Agents SDK workflow with UMAI async checks so responses are gated by policies without blocking tool execution.",
-    steps: [
-      "Create a guardrail job as soon as the user message arrives.",
-      "Run the agent flow and tools as normal.",
-      "Wait for the async verdict before sending the final response.",
-      "On fail, return a safe fallback or trigger a review step.",
-    ],
-    codeLabel: "Pseudocode (TypeScript)",
-    code: `const umai = new Umai({ baseUrl, apiKey });
+  const [agentIdDraft, setAgentIdDraft] = useState<string | null>(null);
+  const [minting, setMinting] = useState(false);
+  const [mintError, setMintError] = useState<string | null>(null);
+  const [bootstrap, setBootstrap] = useState<AgentBootstrapTokenResponse | null>(null);
 
-const job = await umai.guardrails.runAsync({
-  guardrail_id: "pii-default",
-  input: userMessage,
-  metadata: { env_id, project_id }
-});
+  useEffect(() => {
+    if (!tenantId) return;
+    let active = true;
+    fetchGuardrails(tenantId, envId, projectId)
+      .then((items) => {
+        if (active) setGuardrails(items);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [envId, projectId, tenantId]);
 
-const draft = await agent.run({ input: userMessage });
-const verdict = await umai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
+  useEffect(() => {
+    if (!ready || guardrails.length === 0) return;
+    if (!guardrails.some((item) => item.guardrail_id === ctx.guardrailId)) {
+      update({ guardrailId: guardrails[0].guardrail_id });
+    }
+  }, [ctx.guardrailId, guardrails, ready, update]);
 
-return verdict.passed ? draft : safeFallback;`,
-    note: "Use webhooks or a background worker if your guardrails take longer than a user session.",
-  },
-  "google-adk": {
-    tagline: "Guardrails for ADK plans, tools, and final replies",
-    summary:
-      "Kick off UMAI async checks before ADK executes a plan so every response is policy-safe.",
-    steps: [
-      "Send the prompt and tool plan to UMAI for async evaluation.",
-      "Execute the ADK run while policies are evaluated.",
-      "Poll or await the verdict before emitting the final response.",
-      "Log failures and surface safe alternatives to the user.",
-    ],
-    codeLabel: "Pseudocode (Python)",
-    code: `umai = Umai(base_url=BASE_URL, api_key=API_KEY)
+  const content = useMemo(
+    () =>
+      buildGuideContent(guide.slug, {
+        endpoint: ctx.endpoint,
+        guardrailId: ctx.guardrailId || "<guardrail-id>",
+        agentId: ctx.agentId || "support-agent",
+        projectId,
+      }),
+    [ctx.agentId, ctx.endpoint, ctx.guardrailId, guide.slug, projectId]
+  );
+  if (!content) notFound();
 
-job = umai.guardrails.run_async({
-  "guardrail_id": "prompt-injection",
-  "input": user_message,
-  "metadata": {"env_id": env_id, "project_id": project_id}
-})
+  const snippet = content.snippets[Math.min(activeSnippet, content.snippets.length - 1)];
+  const base = `/environments/${envId}/projects/${projectId}`;
+  const agentIdValue = agentIdDraft ?? ctx.agentId;
 
-result = adk_agent.run(user_message)
-verdict = umai.guardrails.wait_for(job["id"], timeout_ms=15000)
-
-return result if verdict["passed"] else safe_fallback`,
-    note: "Capture the ADK plan trace and include it in metadata for richer policy context.",
-  },
-  "microsoft-agt": {
-    tagline: "Internal action-governance support layer inside UMAI",
-    summary:
-      "Keep UMAI as the operator-facing surface and embed Microsoft AGT behind the engine for deterministic tool, MCP, and memory-write governance.",
-    steps: [
-      "Publish a signed UMAI snapshot that includes an optional agt block with enforced action phases.",
-      "Attach action metadata in input.artifacts so the engine can normalize tool, MCP, and memory operations into AGT context.",
-      "Run AGT before the normal policy pipeline for TOOL_INPUT, MCP_REQUEST, and MEMORY_WRITE.",
-      "Merge AGT blocks and step-up decisions into the existing UMAI decision contract and audit trail.",
-    ],
-    codeLabel: "Pseudocode (Python)",
-    code: `request = {
-  "phase": "TOOL_INPUT",
-  "input": {
-    "messages": [{"role": "user", "content": "Export the customer list."}],
-    "phase_focus": "LAST_USER_MESSAGE",
-    "content_type": "text",
-    "artifacts": [{
-      "artifact_type": "TOOL_INPUT",
-      "name": "crm.export",
-      "payload_summary": "Export customer list to CSV",
-      "metadata": {
-        "agent_id": "sales-agent",
-        "action": "export",
-        "tool_name": "crm.export",
-        "classification": "customer-data",
-        "side_effect": true
-      }
-    }]
-  }
-}
-
-decision = await umai.guardrails.test(request)
-if decision["decision"]["action"] == "STEP_UP_APPROVAL":
-    route_to_human_review()`,
-    note: "Start with the managed AGT baseline template, then add project-specific allowlist rules inside the signed snapshot instead of exposing a free-form editor.",
-  },
-  xai: {
-    tagline: "Async guardrails for Grok-style agent loops",
-    summary:
-      "Use UMAI to evaluate user input and tool output while your xAI workflow keeps moving.",
-    steps: [
-      "Start an async guardrail job with the user message.",
-      "Execute the xAI completion or tool loop.",
-      "Await the policy verdict before returning to the user.",
-      "Fallback to a safe response if policies fail.",
-    ],
-    codeLabel: "Pseudocode (TypeScript)",
-    code: `const job = await umai.guardrails.runAsync({
-  guardrail_id: "safety-core",
-  input: userMessage
-});
-
-const completion = await xai.chat({ messages: history });
-const verdict = await umai.guardrails.waitFor(job.id, { timeoutMs: 15000 });
-
-return verdict.passed ? completion : safeFallback;`,
-    note: "Pair the verdict with audit logs to see which policy triggered a block.",
-  },
-  claude: {
-    tagline: "Policy gating for Claude message workflows",
-    summary:
-      "Run UMAI checks in parallel with Anthropic message generation to keep responses safe.",
-    steps: [
-      "Begin an async guardrail job with the incoming prompt.",
-      "Generate Claude messages while policies evaluate.",
-      "Wait for UMAI to return a verdict.",
-      "If blocked, return a compliant response or request clarification.",
-    ],
-    codeLabel: "Pseudocode (Python)",
-    code: `job = umai.guardrails.run_async({
-  "guardrail_id": "data-leakage",
-  "input": user_message
-})
-
-reply = anthropic.messages.create(model="claude-3", messages=history)
-verdict = umai.guardrails.wait_for(job["id"], timeout_ms=15000)
-
-return reply if verdict["passed"] else safe_fallback`,
-    note: "Consider adding a second check for tool outputs before sending the final message.",
-  },
-  langchain: {
-    tagline: "Guardrails between chains, tools, and output",
-    summary:
-      "Enqueue UMAI async checks before you call a chain and gate the final output.",
-    steps: [
-      "Create a guardrail job from the user input.",
-      "Invoke the LangChain runnable or agent.",
-      "Wait for the policy verdict and gate the response.",
-      "Send a safe response or re-run with a stricter prompt if needed.",
-    ],
-    codeLabel: "Pseudocode (Python)",
-    code: `job = umai.guardrails.run_async({
-  "guardrail_id": "pii-default",
-  "input": user_message
-})
-
-output = chain.invoke({"input": user_message})
-verdict = umai.guardrails.wait_for(job["id"], timeout_ms=15000)
-
-return output if verdict["passed"] else safe_fallback`,
-    note: "Use LangChain callbacks to attach UMAI verdicts to traces.",
-  },
-};
-
-export default function ImplementationGuidePage({
-  params,
-}: {
-  params: { envId: string; projectId: string; guide: string };
-}) {
-  const guide = implementationGuides.find((item) => item.slug === params.guide);
-  const content = guideContent[params.guide];
-
-  if (!guide || !content) {
-    notFound();
-  }
-
-  const backHref = `/environments/${params.envId}/projects/${params.projectId}/implementation`;
+  const mintBootstrapToken = async () => {
+    if (!tenantId) return;
+    const agentId = agentIdValue.trim();
+    if (!/^[a-z0-9][a-z0-9-_]*$/.test(agentId)) {
+      setMintError("Agent ID must use lowercase letters, numbers, dashes or underscores.");
+      return;
+    }
+    setMinting(true);
+    setMintError(null);
+    try {
+      update({ agentId });
+      await upsertAgentRegistry({
+        tenant_id: tenantId,
+        environment_id: envId,
+        project_id: projectId,
+        agent_id: agentId,
+        display_name: agentId,
+        runtime: guide.runtime ?? "generic",
+      });
+      setBootstrap(
+        await createAgentBootstrapToken({
+          tenant_id: tenantId,
+          environment_id: envId,
+          project_id: projectId,
+          agent_id: agentId,
+          expires_in_seconds: 900,
+        })
+      );
+    } catch (err) {
+      console.error(err);
+      setMintError("The bootstrap token could not be created.");
+    } finally {
+      setMinting(false);
+    }
+  };
 
   return (
-    <div className="space-y-10">
-      <header className="space-y-4">
+    <div className="space-y-6">
+      <header className="border-b border-gray-200 pb-5">
         <Link
-          href={backHref}
-          className="inline-flex items-center gap-2 text-xs font-semibold text-slate hover:text-ink"
+          href={`${base}/implementation`}
+          className="mb-2 inline-flex items-center gap-1 text-sm font-medium text-secondary hover:underline"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to implementation
+          <ArrowLeft className="h-4 w-4" /> Implementation
         </Link>
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="rounded-2xl border border-slate/10 bg-white px-4 py-3">
-            <Image src={guide.logo} alt={`${guide.title} logo`} width={120} height={40} />
-          </div>
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.3em] text-slate/60">Implementation</p>
-            <h1 className="font-display text-4xl font-bold text-ink">{guide.title}</h1>
-            <p className="mt-2 text-sm text-slate max-w-2xl">{content.tagline}</p>
-          </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Image src={guide.logo} alt={`${guide.title} logo`} width={120} height={40} className="h-8 w-auto object-contain" />
+          <h1 className="text-2xl font-semibold text-gray-900">{guide.title}</h1>
+          <span className={TAG}>{guide.category}</span>
         </div>
+        <p className="mt-2 max-w-3xl text-sm text-gray-600">{content.summary}</p>
       </header>
 
-      <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm space-y-4">
-          <h2 className="text-lg font-semibold text-ink">What you will build</h2>
-          <p className="text-sm text-slate">{content.summary}</p>
-          <ul className="space-y-2 text-sm text-slate">
-            {content.steps.map((step) => (
-              <li key={step} className="flex items-start gap-2">
-                <BadgeCheck className="w-4 h-4 text-emerald-500 mt-0.5" />
-                <span>{step}</span>
-              </li>
-            ))}
-          </ul>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
+        <div className="space-y-6">
+          <SectionCard title="How it works">
+            <ol className="space-y-3">
+              {content.steps.map((step, index) => (
+                <li key={step} className="flex gap-3 text-sm text-gray-700">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-white">
+                    {index + 1}
+                  </span>
+                  <span className="leading-6">{step}</span>
+                </li>
+              ))}
+            </ol>
+          </SectionCard>
+
+          <section className="rounded border border-gray-200 bg-white">
+            <div className="flex flex-wrap items-end justify-between gap-3 border-b border-gray-200 bg-gray-50 px-5 pt-3">
+              <div>
+                <h2 className="text-sm font-semibold text-gray-900">Example</h2>
+                <div className="mt-2 flex gap-5" role="tablist">
+                  {content.snippets.map((item, index) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={index === activeSnippet}
+                      onClick={() => setActiveSnippet(index)}
+                      className={`-mb-px border-b-2 pb-2 text-sm font-medium transition ${
+                        index === activeSnippet
+                          ? "border-secondary text-gray-900"
+                          : "border-transparent text-gray-500 hover:text-gray-900"
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="p-5">
+              <CodeBlock snippet={snippet} />
+            </div>
+          </section>
+
+          <SectionCard title="Good to know">
+            <ul className="list-disc space-y-2 pl-5 text-sm leading-6 text-gray-700">
+              {content.notes.map((note) => (
+                <li key={note}>{note}</li>
+              ))}
+            </ul>
+          </SectionCard>
         </div>
 
-        <div className="rounded-3xl border border-amber-100 bg-amber-50 p-6 shadow-sm space-y-3">
-          <div className="flex items-center gap-2 text-amber-700">
-            <Lightbulb className="w-4 h-4" />
-            <span className="text-xs font-semibold uppercase tracking-[0.2em]">Tip</span>
-          </div>
-          <p className="text-sm text-amber-900">{content.note}</p>
-          <p className="text-xs text-amber-900/70">
-            Start with one guardrail, then layer policy checks as you collect usage data.
-          </p>
-        </div>
-      </section>
+        <aside className="space-y-6">
+          <SectionCard title="Settings" description="Filled into the example on the left.">
+            <div className="space-y-4">
+              <div>
+                <label className={LABEL} htmlFor="guide-endpoint">
+                  UMAI endpoint
+                </label>
+                <input
+                  id="guide-endpoint"
+                  className={`${INPUT} mt-1 font-mono text-xs`}
+                  value={ctx.endpoint}
+                  onChange={(event) => update({ endpoint: event.target.value.trim().replace(/\/+$/, "") })}
+                  spellCheck={false}
+                />
+              </div>
+              <div>
+                <label className={LABEL} htmlFor="guide-guardrail">
+                  Guardrail
+                </label>
+                <select
+                  id="guide-guardrail"
+                  className={`${INPUT} mt-1`}
+                  value={ctx.guardrailId}
+                  onChange={(event) => update({ guardrailId: event.target.value })}
+                  disabled={guardrails.length === 0}
+                >
+                  {guardrails.length === 0 && <option value="">No guardrails yet</option>}
+                  {guardrails.map((guardrail) => (
+                    <option key={guardrail.guardrail_id} value={guardrail.guardrail_id}>
+                      {guardrail.name} · v{guardrail.current_version}
+                    </option>
+                  ))}
+                </select>
+                {ctx.guardrailId && (
+                  <p className="mt-1 flex items-center gap-1 font-mono text-xs text-gray-500">
+                    {ctx.guardrailId}
+                    <CopyButton value={ctx.guardrailId} label="Copy guardrail ID" />
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className={LABEL}>API key</p>
+                <Link href={`${base}/api-keys`} className="mt-1 inline-flex items-center gap-1 text-sm font-medium text-secondary hover:underline">
+                  <KeyRound className="h-4 w-4" /> Manage API keys
+                </Link>
+              </div>
+            </div>
+          </SectionCard>
 
-      <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] items-start">
-        <div className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm space-y-4">
-          <h2 className="text-lg font-semibold text-ink">Implementation snippet</h2>
-          <p className="text-xs text-slate">{content.codeLabel}</p>
-          <pre className="rounded-2xl bg-slate-900 text-slate-100 p-4 text-xs leading-relaxed overflow-x-auto">
-            <code>{content.code}</code>
-          </pre>
-          <div className="rounded-2xl border border-slate/10 bg-slate-50 p-4 text-xs text-slate">
-            Share the same guardrail job ID across logs, traces, and policy dashboards to
-            speed up incident reviews.
-          </div>
-        </div>
+          {guide.kind === "sdk" && (
+            <SectionCard
+              title="Agent identity"
+              description="The SDK signs every call with a key pair registered through a one-time bootstrap token."
+            >
+              <div className="space-y-3">
+                <div>
+                  <label className={LABEL} htmlFor="guide-agent-id">
+                    Agent ID
+                  </label>
+                  <input
+                    id="guide-agent-id"
+                    className={`${INPUT} mt-1 font-mono text-xs`}
+                    value={agentIdValue}
+                    onChange={(event) => setAgentIdDraft(event.target.value)}
+                    onBlur={() => {
+                      if (agentIdDraft !== null) update({ agentId: agentIdDraft.trim() || "support-agent" });
+                    }}
+                    placeholder="support-agent"
+                    spellCheck={false}
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Registered with runtime <span className="font-mono">{guide.runtime}</span>; shown on the Sessions page.
+                  </p>
+                </div>
+                {mintError && <InlineNotice tone="error">{mintError}</InlineNotice>}
+                <button type="button" className={`${BTN_PRIMARY} w-full`} onClick={mintBootstrapToken} disabled={minting || !tenantId}>
+                  {minting ? "Minting…" : bootstrap ? "Mint a new token" : "Register & mint bootstrap token"}
+                </button>
+                {bootstrap && (
+                  <div className="rounded border border-emerald-200 bg-emerald-50 px-3 py-3">
+                    <p className="text-xs font-medium text-emerald-800">UMAI_AGENT_BOOTSTRAP_TOKEN</p>
+                    <p className="mt-1 flex items-start gap-2">
+                      <code className="min-w-0 flex-1 break-all font-mono text-xs text-gray-900">{bootstrap.bootstrap_token}</code>
+                      <CopyButton value={bootstrap.bootstrap_token} label="Copy bootstrap token" />
+                    </p>
+                    <p className="mt-2 text-xs text-emerald-800">
+                      Single use · expires{" "}
+                      {new Date(bootstrap.expires_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      . Shown once — copy it now.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          )}
 
-        <div className="rounded-3xl border border-slate/10 bg-white p-5 shadow-sm">
-          <Image
-            src="/assets/implementation/flow.svg"
-            alt="Guardrail workflow diagram"
-            width={760}
-            height={180}
-            className="w-full h-auto"
-          />
-          <div className="mt-4 text-xs text-slate">
-            Policy checks keep AI workflows responsive while UMAI evaluates risk
-            signals and policy violations.
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm space-y-4">
-        <h2 className="text-lg font-semibold text-ink">Deployment checklist</h2>
-        <div className="grid gap-3 md:grid-cols-2 text-sm text-slate">
-          <div className="rounded-2xl bg-slate-50 p-4">
-            Use a dedicated guardrail ID per workflow to simplify rollback.
-          </div>
-          <div className="rounded-2xl bg-slate-50 p-4">
-            Store verdicts in your telemetry pipeline for audit trails.
-          </div>
-          <div className="rounded-2xl bg-slate-50 p-4">
-            Route blocked responses to a human review or safe fallback.
-          </div>
-          <div className="rounded-2xl bg-slate-50 p-4">
-            Monitor latency budgets and switch to queued async delivery when needed.
-          </div>
-        </div>
-      </section>
+          <SectionCard title="Prerequisites">
+            <ul className="space-y-2">
+              {content.prerequisites.map((item) => (
+                <li key={item} className="flex gap-2 text-sm text-gray-700">
+                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-gray-400" />
+                  <span className="leading-6">{item}</span>
+                </li>
+              ))}
+            </ul>
+          </SectionCard>
+        </aside>
+      </div>
     </div>
   );
 }

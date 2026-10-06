@@ -5,6 +5,8 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useUser } from "src/lib/auth-client";
+import { fetchEnvironments, fetchProjects } from "src/lib/api";
+import { findGuide } from "src/lib/implementation-guides";
 import { ConsoleProvider, useConsole } from "./console-context";
 import {
   BRAND_LOGO_WHITE,
@@ -24,17 +26,16 @@ import {
   FileText,
   FlaskConical,
   Code2,
-  MessageSquare,
-  LifeBuoy,
   ChevronRight,
   Activity,
   KeyRound,
-  Bot,
   Laptop,
   LayoutGrid,
   ScanSearch,
   ShieldAlert,
-  History
+  History,
+  PanelLeftClose,
+  PanelLeftOpen
 } from "lucide-react";
 
 // Onboarding başlığı ile konsol başlığı AYRI bileşenlerdir, tek bir bileşenin iki
@@ -95,9 +96,9 @@ function TopNavbar() {
           <Image
             src={BRAND_LOGO_WHITE}
             alt={`${BRAND_NAME} Logo`}
-            width={120}
-            height={32}
-            className="h-8 w-auto object-contain transition-opacity group-hover:opacity-80"
+            width={90}
+            height={16}
+            className="h-4 w-auto object-contain transition-opacity group-hover:opacity-80"
             priority
           />
         </Link>
@@ -201,6 +202,8 @@ function Breadcrumbs() {
     if (segment === "extension-monitoring") label = "Extension Monitoring";
     if (segment === "applications") label = "Applications";
     if (segment === "collectors") label = "Collectors";
+    const guide = findGuide(segment);
+    if (guide) label = guide.title;
 
     crumbs.push({ label, href: currentPath });
   });
@@ -224,8 +227,45 @@ function Breadcrumbs() {
   );
 }
 
+const RAIL_STORAGE_KEY = "umai.cc.rail-expanded";
+
+function readRailPreference(): boolean {
+  try {
+    return window.localStorage.getItem(RAIL_STORAGE_KEY) !== "0";
+  } catch {
+    return true; // depolama kapalıysa varsayılan: açık
+  }
+}
+
 function NavRail() {
   const pathname = usePathname();
+  const { selectedEnvironment, selectedProject } = useConsole();
+  // Kapsam sidebar'ı (Environment/Project) görünürken iki menü yan yana
+  // gelmesin diye rail kapalı başlar; kullanıcı açarsa kapsamdan çıkana kadar
+  // açık kalır. Kapsam dışında kullanıcının kayıtlı tercihi geçerlidir.
+  const hasScopeSidebar = Boolean(selectedEnvironment || selectedProject);
+  const [expanded, setExpanded] = useState(true);
+
+  // localStorage yalnızca tarayıcıda var; ilk render sunucuyla aynı olsun diye
+  // tercih mount sonrasında okunur.
+  useEffect(() => {
+    setExpanded(hasScopeSidebar ? false : readRailPreference());
+  }, [hasScopeSidebar]);
+
+  const toggle = () => {
+    setExpanded((prev) => {
+      const next = !prev;
+      if (!hasScopeSidebar) {
+        try {
+          window.localStorage.setItem(RAIL_STORAGE_KEY, next ? "1" : "0");
+        } catch {
+          /* yok say */
+        }
+      }
+      return next;
+    });
+  };
+
   const railItems = [
     { label: "Home", href: "/home", icon: Home },
     { label: "Environments", href: "/environments", icon: Layers },
@@ -237,40 +277,98 @@ function NavRail() {
     { label: "Collectors", href: "/collectors", icon: Laptop },
   ];
 
+  const itemBase = `flex h-9 items-center gap-3 rounded-md text-[13px] transition-colors ${
+    expanded ? "px-2.5" : "justify-center px-0"
+  }`;
+  const ToggleIcon = expanded ? PanelLeftClose : PanelLeftOpen;
+
   return (
-    <div className="w-[56px] bg-[#fcfdff] border-r border-secondary/10 flex flex-col items-center py-6 gap-6 z-50 shrink-0 h-full">
-      {railItems.map((item) => (
-        (() => {
-          const isExtensionRail = item.href === "/extension-monitoring";
-          const isActive = isExtensionRail
-            ? pathname.startsWith("/extension/") || pathname.startsWith("/extension-monitoring")
-            : pathname.startsWith(item.href);
+    <nav
+      aria-label="Primary"
+      className={`${expanded ? "w-[208px]" : "w-[56px]"} shrink-0 h-full bg-[#fcfdff] border-r border-secondary/10 flex flex-col px-2 py-3 z-50 transition-[width] duration-200`}
+    >
+      <div className="flex flex-col gap-0.5">
+        {railItems.map((item) => {
+          const isActive =
+            item.href === "/extension-monitoring"
+              ? pathname.startsWith("/extension/") || pathname.startsWith("/extension-monitoring")
+              : pathname.startsWith(item.href);
           return (
             <Link
-              key={item.label}
+              key={item.href}
               href={item.href}
-              title={item.label}
-              className={`group relative h-10 w-10 flex items-center justify-center rounded-lg transition-all duration-300 ${
+              title={expanded ? undefined : item.label}
+              aria-current={isActive ? "page" : undefined}
+              className={`${itemBase} ${
                 isActive
-                  ? "scale-110 bg-secondary text-white shadow-accent"
-                  : "text-gray-400 hover:bg-secondary/8 hover:text-secondary"
+                  ? "bg-secondary/10 text-secondary font-semibold"
+                  : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
               }`}
             >
-              <item.icon className="w-5 h-5 group-hover:scale-110 transition-transform" />
-              {isActive && (
-                <div className="absolute -left-0.5 top-2 bottom-2 w-1 rounded-r-full bg-secondary" />
-              )}
+              <item.icon className="w-[18px] h-[18px] shrink-0" />
+              {expanded && <span className="truncate">{item.label}</span>}
             </Link>
           );
-        })()
-      ))}
-    </div>
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={toggle}
+        title={expanded ? undefined : "Expand navigation"}
+        aria-label={expanded ? "Collapse navigation" : "Expand navigation"}
+        className={`${itemBase} mt-auto text-gray-500 hover:bg-gray-100 hover:text-gray-900`}
+      >
+        <ToggleIcon className="w-[18px] h-[18px] shrink-0" />
+        {expanded && <span>Collapse</span>}
+      </button>
+    </nav>
   );
+}
+
+// Sidebar başlığında URL'deki ID değil kaydın gerçek adı görünsün. Ad
+// bulunamazsa ID'ye düşülür.
+function useScopeNames(envId: string | null, projectId: string | null) {
+  const { tenantId } = useConsole();
+  const [envName, setEnvName] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEnvName(null);
+    if (!tenantId || !envId) return;
+    let active = true;
+    fetchEnvironments(tenantId)
+      .then((envs) => {
+        if (active) setEnvName(envs.find((env) => env.environment_id === envId)?.name ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [tenantId, envId]);
+
+  useEffect(() => {
+    setProjectName(null);
+    if (!tenantId || !envId || !projectId) return;
+    let active = true;
+    fetchProjects(tenantId, envId)
+      .then((projects) => {
+        if (active) {
+          setProjectName(projects.find((p) => p.project_id === projectId)?.name ?? null);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [tenantId, envId, projectId]);
+
+  return { envName, projectName };
 }
 
 function Sidebar() {
   const { selectedEnvironment, selectedProject } = useConsole();
   const pathname = usePathname();
+  const { envName, projectName } = useScopeNames(selectedEnvironment, selectedProject);
 
   if (!selectedEnvironment && !selectedProject) {
     return null;
@@ -283,16 +381,24 @@ function Sidebar() {
       : selectedEnvironment
         ? `/environments/${selectedEnvironment}`
         : "/environments";
+  const scopeTitle = isProjectView
+    ? projectName ?? selectedProject
+    : envName ?? selectedEnvironment;
 
   return (
     <aside className="w-[240px] flex-col bg-white border-r border-secondary/10 h-full flex z-40 shrink-0">
       <div className="p-5 border-b border-secondary/10">
-        <p className="text-[11px] font-semibold text-secondary/70 capitalize mb-1">
+        <p className="text-xs font-medium text-gray-500 mb-1">
           {isProjectView ? "Project" : "Environment"}
         </p>
-        <h3 className="text-xl font-bold text-gray-900 truncate capitalize leading-tight">
-          {isProjectView ? selectedProject?.replace(/-/g, " ") : selectedEnvironment?.replace(/-/g, " ")}
+        <h3 className="text-lg font-semibold text-gray-900 truncate leading-tight" title={scopeTitle ?? undefined}>
+          {scopeTitle}
         </h3>
+        {isProjectView && (
+          <p className="mt-0.5 text-xs text-gray-500 truncate">
+            {envName ?? selectedEnvironment}
+          </p>
+        )}
       </div>
 
       <nav className="flex-1 py-4 px-3 overflow-y-auto">
@@ -300,8 +406,8 @@ function Sidebar() {
           <div className="space-y-1">
             <Link
               href={overviewHref}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 ${pathname === overviewHref
-                ? "border border-secondary/15 bg-secondary/8 text-secondary font-bold"
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${pathname === overviewHref
+                ? "bg-secondary/8 text-secondary font-semibold"
                 : "text-gray-600 hover:bg-secondary/5 hover:text-secondary font-medium"
                 }`}
             >
@@ -310,13 +416,12 @@ function Sidebar() {
             </Link>
 
             {selectedProject && (
-              <div className="mt-1 ml-4 pl-4 border-l border-secondary/10 flex flex-col gap-0.5 animate-in fade-in slide-in-from-top-1 duration-300">
+              <div className="mt-1 ml-4 pl-4 border-l border-secondary/10 flex flex-col gap-0.5">
                 {[
                   { label: "Guardrails", href: "guardrails", icon: Shield },
                   { label: "Policies", href: "policies", icon: FileText },
                   { label: "Test", href: "test", icon: FlaskConical },
                   { label: "Evaluation", href: "evaluation", icon: BarChart3 },
-                  { label: "Agents", href: "agents", icon: Bot },
                   { label: "Implementation", href: "implementation", icon: Code2 },
                   { label: "API Keys", href: "api-keys", icon: KeyRound },
                   { label: "Alerts", href: "alerts", icon: Bell },
@@ -327,8 +432,8 @@ function Sidebar() {
                     <Link
                       key={sub.href}
                       href={fullHref}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-all duration-200 ${isActive
-                        ? "bg-secondary/8 text-secondary font-bold"
+                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] transition-colors ${isActive
+                        ? "bg-secondary/8 text-secondary font-semibold"
                         : "text-gray-500 hover:text-secondary hover:bg-secondary/5 font-medium"
                         }`}
                     >
@@ -342,18 +447,6 @@ function Sidebar() {
           </div>
         )}
       </nav>
-
-      <div className="mt-auto p-4 border-t border-secondary/10 bg-secondary/5 flex flex-col gap-2">
-        <Link href="#" className="flex items-center gap-3 px-2 py-1 text-[11px] font-semibold text-gray-500 transition-colors hover:text-secondary">
-          <MessageSquare className="w-4 h-4" /> Chat with us
-        </Link>
-        <Link href="#" className="flex items-center justify-between bg-white p-3 rounded-lg text-[11px] font-bold text-gray-700 transition-all border border-secondary/10 hover:border-secondary/25 hover:shadow-soft">
-          <div className="flex items-center gap-2">
-            <LifeBuoy className="w-4 h-4" /> Support ticket
-          </div>
-          <span className="rounded bg-secondary px-1.5 py-0.5 text-[9px] font-black uppercase tracking-tighter text-white">NEW</span>
-        </Link>
-      </div>
     </aside>
   );
 }

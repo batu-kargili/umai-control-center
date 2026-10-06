@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import { Check, Copy } from "lucide-react";
 import {
   AgtConfig,
   createGuardrail,
@@ -37,7 +38,7 @@ type PreflightRule = {
   block_on_match: boolean;
 };
 
-type GuardrailScreen = "list" | "create";
+type GuardrailScreen = "list" | "create" | "edit";
 
 type WizardMode = "new" | "existing";
 
@@ -150,6 +151,13 @@ const DEFAULT_LLM_CONFIG = {
 
 const DEPLOY_SUCCESS_MESSAGE = "Guardrail Deployed and Published Successfully.";
 
+// Fluent/Carbon tarzı düz butonlar: 4 px köşe, gölgesiz, mavi yalnızca primary.
+const BTN_PRIMARY =
+  "inline-flex h-8 items-center justify-center rounded bg-secondary px-3 text-sm font-medium text-white transition hover:bg-secondary/90 disabled:cursor-not-allowed disabled:opacity-60";
+const BTN_SECONDARY =
+  "inline-flex h-8 items-center justify-center rounded border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60";
+const TAG = "inline-flex rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-700";
+
 const TOAST_LABELS: Record<ToastTone, string> = {
   success: "Success",
   error: "Error",
@@ -157,9 +165,9 @@ const TOAST_LABELS: Record<ToastTone, string> = {
 };
 
 const TOAST_STYLES: Record<ToastTone, string> = {
-  success: "border-emerald-200 bg-emerald-500 text-white shadow-lg shadow-emerald-500/20",
-  error: "border-danger/40 bg-danger text-white shadow-lg shadow-danger/20",
-  info: "border-sky-200 bg-sky-500 text-white shadow-lg shadow-sky-500/20",
+  success: "border-emerald-700 bg-emerald-600 text-white",
+  error: "border-red-700 bg-danger text-white",
+  info: "border-secondary bg-secondary text-white",
 };
 
 let nextToastId = 1;
@@ -338,6 +346,7 @@ export default function GuardrailsPage() {
   const [deployingTemplate, setDeployingTemplate] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [screen, setScreen] = useState<GuardrailScreen>("list");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [createOption, setCreateOption] = useState<CreateOption | null>(null);
 
   const [agenticDescription, setAgenticDescription] = useState("");
@@ -454,6 +463,10 @@ export default function GuardrailsPage() {
   const visibleWizardSteps = useMemo(
     () =>
       WIZARD_STEPS.filter((step) => {
+        // Mevcut guardrail'e yeni sürüm: kimlik zaten belli, Start ve Basics atlanır.
+        if (screen === "edit" && step.id <= 1) {
+          return false;
+        }
         if (createOption === "custom" && step.id === 0) {
           return false;
         }
@@ -462,7 +475,7 @@ export default function GuardrailsPage() {
         }
         return true;
       }),
-    [createOption]
+    [createOption, screen]
   );
 
   const visibleWizardStepIds = useMemo(
@@ -820,7 +833,7 @@ export default function GuardrailsPage() {
 
   const guardrailIdStatus = useMemo(() => {
     if (!guardrailIdTrimmed) {
-      return { tone: "text-slate/60", message: "Required." };
+      return { tone: "text-gray-500", message: "Required." };
     }
     if (!guardrailIdPattern.test(guardrailIdTrimmed)) {
       return { tone: "text-danger", message: "Use lowercase letters, numbers, and dashes." };
@@ -828,7 +841,7 @@ export default function GuardrailsPage() {
     if (guardrailIdExists) {
       return { tone: "text-danger", message: "This ID already exists." };
     }
-    return { tone: "text-mint", message: "ID is available." };
+    return { tone: "text-emerald-700", message: "ID is available." };
   }, [guardrailIdExists, guardrailIdPattern, guardrailIdTrimmed]);
 
   const slugifyId = (value: string, fallback: string) => {
@@ -961,6 +974,19 @@ export default function GuardrailsPage() {
       );
     } finally {
       setPublishingDetailsVersion(false);
+    }
+  };
+
+  const copyGuardrailId = async (guardrailId: string) => {
+    try {
+      await navigator.clipboard.writeText(guardrailId);
+      setCopiedId(guardrailId);
+      window.setTimeout(
+        () => setCopiedId((current) => (current === guardrailId ? null : current)),
+        1500
+      );
+    } catch {
+      pushToast("error", "Could not copy to clipboard.");
     }
   };
 
@@ -1348,9 +1374,11 @@ export default function GuardrailsPage() {
   };
 
   const startExistingGuardrailVersion = async (guardrailId: string) => {
-    setScreen("create");
+    setScreen("edit");
     setCreateOption("custom");
-    setWizardStep(1);
+    setWizardMode("existing");
+    setWizardGuardrailId(guardrailId);
+    setWizardStep(2);
     setWizardError(null);
     await loadExistingGuardrailConfig(guardrailId);
   };
@@ -1704,6 +1732,10 @@ export default function GuardrailsPage() {
 
   const handleBack = () => {
     setWizardError(null);
+    if (screen === "edit" && visibleWizardStepIds.indexOf(wizardStep) <= 0) {
+      closeCreateScreen();
+      return;
+    }
     if (createOption === "custom" && wizardStep === 1) {
       setCreateOption(null);
       return;
@@ -1718,56 +1750,56 @@ export default function GuardrailsPage() {
   };
 
   return (
-    <div className="space-y-10 fade-up">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">Guardrails</p>
-          <h2 className="font-display text-4xl font-bold text-ink tracking-tight">Guardrail Control</h2>
-          <p className="mt-1 text-sm text-slate">
-            Review active guardrails first, then start a new one only when you are ready.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="rounded-full bg-slate/10 px-4 py-2 text-xs font-semibold text-slate">
-            {guardrails.length} guardrails
+    <div className="space-y-8">
+      <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
+        {screen === "edit" && selectedWizardGuardrail ? (
+          <div>
+            <p className="text-xs font-medium text-gray-500">Guardrail</p>
+            <h1 className="mt-0.5 text-2xl font-semibold text-gray-900">
+              {selectedWizardGuardrail.name}
+            </h1>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+              <span className="font-mono text-xs">{selectedWizardGuardrail.guardrail_id}</span>
+              <span className={TAG}>{selectedWizardGuardrail.mode}</span>
+              <span>Current version v{selectedWizardGuardrail.current_version}</span>
+            </div>
           </div>
+        ) : (
+          <div>
+            <h1 className="text-2xl font-semibold text-gray-900">Guardrails</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              {loading
+                ? "Loading…"
+                : `${guardrails.length} ${guardrails.length === 1 ? "guardrail" : "guardrails"}`}
+              {" · "}
+              {projectId}
+            </p>
+          </div>
+        )}
+        <div className="flex flex-wrap items-center gap-3">
           {screen === "list" ? (
-            <button
-              type="button"
-              className="rounded-xl bg-ink px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-ink/90"
-              onClick={openCreateScreen}
-            >
-              Create New Guardrail
+            <button type="button" className={BTN_PRIMARY} onClick={openCreateScreen}>
+              Create guardrail
             </button>
           ) : (
-            <button
-              type="button"
-              className="rounded-xl border border-slate/10 px-4 py-2 text-xs font-bold text-slate hover:bg-slate/5"
-              onClick={closeCreateScreen}
-            >
-              Back to Guardrails
+            <button type="button" className={BTN_SECONDARY} onClick={closeCreateScreen}>
+              Back to guardrails
             </button>
           )}
         </div>
       </header>
 
       {screen === "create" && (
-        <section className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm">
+        <section className="rounded border border-gray-200 bg-white p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                Create Flow
-              </p>
-              <h3 className="mt-2 font-display text-2xl font-bold text-ink">Create New Guardrail</h3>
-              <p className="mt-2 max-w-2xl text-sm text-slate">
-                Choose how you want to start. We can go deeper into each path after this first
-                decision.
-              </p>
+              <h2 className="text-base font-semibold text-gray-900">Create guardrail</h2>
+              <p className="mt-1 text-sm text-gray-500">Choose how to start.</p>
             </div>
             {createOption && (
               <button
                 type="button"
-                className="rounded-xl border border-slate/10 px-4 py-2 text-xs font-bold text-slate hover:bg-slate/5"
+                className={BTN_SECONDARY}
                 onClick={() => setCreateOption(null)}
               >
                 Back to options
@@ -1775,38 +1807,23 @@ export default function GuardrailsPage() {
             )}
           </div>
 
-          <div className="mt-8 grid gap-4 xl:grid-cols-3">
-            {CREATE_OPTIONS.map((option, index) => {
+          <div className="mt-5 grid gap-4 xl:grid-cols-3">
+            {CREATE_OPTIONS.map((option) => {
               const active = createOption === option.id;
               return (
                 <button
                   key={option.id}
                   type="button"
                   onClick={() => selectCreateOption(option.id)}
-                  className={`rounded-3xl border px-6 py-6 text-left transition ${
+                  aria-pressed={active}
+                  className={`rounded border p-5 text-left transition ${
                     active
-                      ? "border-ink bg-ink text-white shadow-sm"
-                      : "border-slate/10 bg-white hover:border-slate/20 hover:bg-slate/5"
+                      ? "border-secondary bg-secondary/5"
+                      : "border-gray-200 bg-white hover:border-gray-300"
                   }`}
                 >
-                  <p
-                    className={`text-[10px] font-bold uppercase tracking-[0.3em] ${
-                      active ? "text-white/70" : "text-slate/60"
-                    }`}
-                  >
-                    {String(index + 1).padStart(2, "0")} {option.eyebrow}
-                  </p>
-                  <h4 className="mt-5 text-xl font-bold">{option.label}</h4>
-                  <p className={`mt-3 text-sm ${active ? "text-white/80" : "text-slate"}`}>
-                    {option.description}
-                  </p>
-                  <span
-                    className={`mt-8 inline-flex text-[10px] font-bold uppercase tracking-[0.3em] ${
-                      active ? "text-white" : "text-accent"
-                    }`}
-                  >
-                    {active ? "Selected" : "Choose option"}
-                  </span>
+                  <p className="text-sm font-semibold text-gray-900">{option.label}</p>
+                  <p className="mt-1 text-sm text-gray-500">{option.description}</p>
                 </button>
               );
             })}
@@ -1817,17 +1834,14 @@ export default function GuardrailsPage() {
       {screen === "create" && createOption === "ai" && (
         <section
           id="agentic-builder"
-          className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm space-y-6"
+          className="rounded border border-gray-200 bg-white p-6 space-y-6"
         >
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-              AI Builder
-            </p>
-            <h3 className="mt-2 text-2xl font-bold text-ink">
+            <h3 className="text-base font-semibold text-gray-900">
               Describe the guardrail you need
             </h3>
-            <p className="mt-2 text-sm text-slate max-w-2xl">
+            <p className="mt-1 max-w-2xl text-sm text-gray-500">
               Answer a short questionnaire and UMAI will draft policies and a deployable
               guardrail for approval.
             </p>
@@ -1837,11 +1851,11 @@ export default function GuardrailsPage() {
         <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                <label className="text-xs font-medium text-gray-500">
                   1. Describe your agent functionality
                 </label>
                 <textarea
-                  className="h-28 w-full rounded-2xl border border-slate/10 bg-white px-3 py-3 text-sm"
+                  className="h-28 w-full rounded border border-gray-200 bg-white px-3 py-3 text-sm"
                   value={agenticDescription}
                   onChange={(event) => setAgenticDescription(event.target.value)}
                   placeholder="Paste the prompt or describe the workflow."
@@ -1850,12 +1864,12 @@ export default function GuardrailsPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <label className="text-xs font-medium text-gray-500">
                     2. What is this agent for
                   </label>
                   <input
                     list="agentic-agent-types"
-                    className="w-full rounded-2xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                    className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                     value={agenticAgentType}
                     onChange={(event) => setAgenticAgentType(event.target.value)}
                     placeholder="Chat assistant, classifier, code agent..."
@@ -1867,11 +1881,11 @@ export default function GuardrailsPage() {
                   </datalist>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <label className="text-xs font-medium text-gray-500">
                     3. Target audience
                   </label>
                   <input
-                    className="w-full rounded-2xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                    className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                     value={agenticAudience}
                     onChange={(event) => setAgenticAudience(event.target.value)}
                     placeholder="Internal users, enterprise customers, students..."
@@ -1881,18 +1895,18 @@ export default function GuardrailsPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <label className="text-xs font-medium text-gray-500">
                     4. Available countries
                   </label>
                   <input
-                    className="w-full rounded-2xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                    className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                     value={agenticCountries}
                     onChange={(event) => setAgenticCountries(event.target.value)}
                     placeholder="US, UK, DE (comma separated)"
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <label className="text-xs font-medium text-gray-500">
                     5. Agent architecture
                   </label>
                   <div className="flex flex-wrap gap-2">
@@ -1903,10 +1917,10 @@ export default function GuardrailsPage() {
                           key={item}
                           type="button"
                           onClick={() => toggleAgenticArchitecture(item)}
-                          className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                          className={`rounded border px-3 py-1 text-xs font-semibold transition ${
                             active
-                              ? "border-ink/10 bg-ink text-white"
-                              : "border-slate/10 bg-white text-slate"
+                              ? "border-ink/10 bg-secondary text-white"
+                              : "border-gray-200 bg-white text-gray-600"
                           }`}
                         >
                           {item}
@@ -1919,7 +1933,7 @@ export default function GuardrailsPage() {
 
               <button
                 type="button"
-                className="inline-flex items-center justify-center rounded-xl bg-accent px-4 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-accent/90 disabled:opacity-60"
+                className="inline-flex items-center justify-center rounded bg-secondary px-4 py-3 text-sm font-medium text-white transition hover:bg-secondary/90 disabled:opacity-60"
                 onClick={handleAgenticGenerate}
                 disabled={agenticLoading}
               >
@@ -1927,77 +1941,77 @@ export default function GuardrailsPage() {
               </button>
             </div>
 
-            <div className="rounded-2xl border border-slate/10 bg-slate/5 p-5 space-y-4">
+            <div className="rounded border border-gray-200 bg-gray-50 p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                <p className="text-xs font-medium text-gray-500">
                   Draft review
                 </p>
                 {agenticDraft && (
-                  <span className="text-[10px] font-semibold text-slate">
+                  <span className="text-xs font-medium text-gray-600">
                     {agenticDraft.policies.length} policies
                   </span>
                 )}
               </div>
 
               {!agenticDraft ? (
-                <p className="text-sm text-slate">
+                <p className="text-sm text-gray-600">
                   No draft yet. Generate to preview the recommended guardrail.
                 </p>
               ) : (
                 <div className="space-y-4">
                   <div>
-                    <p className="text-xs font-semibold text-ink">{agenticDraft.guardrail.name}</p>
-                    <p className="text-[11px] text-slate">{agenticDraft.guardrail.guardrail_id}</p>
-                    <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate">
-                      <span className="rounded-full bg-white px-2 py-1">
+                    <p className="text-xs font-semibold text-gray-900">{agenticDraft.guardrail.name}</p>
+                    <p className="text-xs text-gray-600">{agenticDraft.guardrail.guardrail_id}</p>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
+                      <span className="rounded bg-white px-2 py-1">
                         {agenticDraft.guardrail.mode}
                       </span>
                       {agenticDraft.guardrail.phases.map((phase) => (
-                        <span key={phase} className="rounded-full bg-white px-2 py-1">
+                        <span key={phase} className="rounded bg-white px-2 py-1">
                           {phase}
                         </span>
                       ))}
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-slate/10 bg-white p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <div className="rounded border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-medium text-gray-500">
                       Preflight
                     </p>
-                    <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-lg bg-slate/5 px-3 py-2 text-[11px] text-slate">
+                    <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
                       {formatJson(agenticDraft.guardrail.preflight)}
                     </pre>
                   </div>
 
-                  <div className="rounded-xl border border-slate/10 bg-white p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <div className="rounded border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-medium text-gray-500">
                       LLM config
                     </p>
-                    <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap rounded-lg bg-slate/5 px-3 py-2 text-[11px] text-slate">
+                    <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
                       {formatJson(agenticDraft.guardrail.llm_config)}
                     </pre>
                   </div>
 
                   <div className="space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <p className="text-xs font-medium text-gray-500">
                       Policies
                     </p>
                     <div className="space-y-2">
                       {agenticDraft.policies.map((policy) => (
                         <div
                           key={policy.policy_id}
-                          className="rounded-xl border border-slate/10 bg-white px-3 py-2"
+                          className="rounded border border-gray-200 bg-white px-3 py-2"
                         >
                           <div className="flex items-center justify-between">
                             <div>
-                              <p className="text-xs font-semibold text-ink">{policy.name}</p>
-                              <p className="text-[10px] text-slate">{policy.policy_id}</p>
+                              <p className="text-xs font-semibold text-gray-900">{policy.name}</p>
+                              <p className="text-xs text-gray-600">{policy.policy_id}</p>
                             </div>
-                            <span className="text-[10px] font-semibold text-slate">
+                            <span className="text-xs font-medium text-gray-600">
                               {policy.type}
                             </span>
                           </div>
-                          <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap rounded-lg bg-slate/5 px-3 py-2 text-[11px] text-slate">
+                          <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
                             {formatJson(policy.config)}
                           </pre>
                         </div>
@@ -2005,19 +2019,19 @@ export default function GuardrailsPage() {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-slate/10 bg-white p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <div className="rounded border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-medium text-gray-500">
                       Rationale
                     </p>
-                    <p className="mt-2 text-xs text-slate">{agenticDraft.rationale}</p>
+                    <p className="mt-2 text-xs text-gray-600">{agenticDraft.rationale}</p>
                   </div>
 
                   {agenticDraft.notes.length > 0 && (
-                    <div className="rounded-xl border border-slate/10 bg-white p-3">
-                      <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <div className="rounded border border-gray-200 bg-white p-3">
+                      <p className="text-xs font-medium text-gray-500">
                         Notes
                       </p>
-                      <ul className="mt-2 space-y-1 text-xs text-slate">
+                      <ul className="mt-2 space-y-1 text-xs text-gray-600">
                         {agenticDraft.notes.map((note) => (
                           <li key={note}>- {note}</li>
                         ))}
@@ -2027,7 +2041,7 @@ export default function GuardrailsPage() {
 
                   <button
                     type="button"
-                    className="w-full rounded-xl bg-ink px-4 py-3 text-xs font-bold text-white shadow-sm transition hover:bg-ink/90 disabled:opacity-60"
+                    className="w-full rounded bg-secondary px-4 py-3 text-sm font-medium text-white transition hover:bg-secondary/90 disabled:opacity-60"
                     onClick={handleAgenticApprove}
                     disabled={agenticApproving}
                   >
@@ -2042,132 +2056,180 @@ export default function GuardrailsPage() {
 
       <div className="grid gap-6">
         {screen === "list" && (
-          <section className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm">
-          <div className="flex items-center justify-between">
-            <h3 className="font-display text-xl font-bold text-ink">Active Guardrails</h3>
-            <span className="text-xs text-slate">{loading ? "Loading..." : `${guardrails.length} total`}</span>
-          </div>
-          <div className="mt-6 grid gap-4">
-            {loading ? (
-              <div className="py-10 text-center text-sm text-slate/50">Loading guardrails...</div>
-            ) : guardrails.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate/20 bg-slate/5 px-6 py-12 text-center">
-                <p className="text-sm font-semibold text-ink">No active guardrails yet.</p>
-                <p className="mt-2 text-sm text-slate">
-                  Create your first guardrail to start protecting runtime traffic.
-                </p>
-                <button
-                  type="button"
-                  className="mt-6 rounded-xl bg-ink px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-ink/90"
-                  onClick={openCreateScreen}
-                >
-                  Create New Guardrail
-                </button>
-              </div>
-            ) : (
-              guardrails.map((guardrail) => (
-                <div
-                  key={guardrail.guardrail_id}
-                  className={`w-full rounded-2xl border px-5 py-4 shadow-sm transition ${
-                    guardrail.guardrail_id === selectedGuardrailId
-                      ? "border-accent/40 bg-accent/5"
-                      : "border-slate/10 bg-white"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => openDetails(guardrail.guardrail_id)}
-                    className="w-full text-left"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-semibold text-ink">{guardrail.name}</p>
-                        <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-slate/50">
-                          {guardrail.guardrail_id}
-                        </p>
-                      </div>
-                      <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
-                        {guardrail.mode}
-                      </span>
-                    </div>
-                  </button>
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    <span className="text-xs text-slate">
-                      Current version: {guardrail.current_version}
-                    </span>
-                    <div className="flex items-center gap-2">
+          <section className="overflow-x-auto rounded border border-gray-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Name</th>
+                  <th className="px-4 py-2.5 font-medium">Mode</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Current version</th>
+                  <th className="px-4 py-2.5 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {loading ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
+                      Loading guardrails…
+                    </td>
+                  </tr>
+                ) : guardrails.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-10 text-center text-gray-500">
+                      No guardrails yet.{" "}
                       <button
                         type="button"
-                        className="rounded-xl border border-slate/10 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.2em] text-slate hover:bg-slate/5"
-                        onClick={() => void startExistingGuardrailVersion(guardrail.guardrail_id)}
+                        className="font-medium text-secondary hover:underline"
+                        onClick={openCreateScreen}
                       >
-                        Create version
+                        Create the first one
                       </button>
-                      <button
-                        type="button"
-                        className="text-[10px] font-bold uppercase tracking-[0.3em] text-accent"
-                        onClick={() => openDetails(guardrail.guardrail_id)}
-                      >
-                        View details
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+                      .
+                    </td>
+                  </tr>
+                ) : (
+                  guardrails.map((guardrail) => (
+                    <tr
+                      key={guardrail.guardrail_id}
+                      onClick={() => openDetails(guardrail.guardrail_id)}
+                      className="cursor-pointer transition-colors hover:bg-gray-50"
+                    >
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-gray-900">{guardrail.name}</p>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <span className="font-mono text-xs text-gray-500">{guardrail.guardrail_id}</span>
+                          <button
+                            type="button"
+                            className="rounded p-0.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-700"
+                            title="Copy ID"
+                            aria-label={`Copy ${guardrail.guardrail_id}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void copyGuardrailId(guardrail.guardrail_id);
+                            }}
+                          >
+                            {copiedId === guardrail.guardrail_id ? (
+                              <Check className="h-3.5 w-3.5 text-emerald-600" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={TAG}>{guardrail.mode}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+                        v{guardrail.current_version}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          className="font-medium text-secondary hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void startExistingGuardrailVersion(guardrail.guardrail_id);
+                          }}
+                        >
+                          Create version
+                        </button>
+                        <span className="mx-2 text-gray-300" aria-hidden="true">
+                          |
+                        </span>
+                        <button
+                          type="button"
+                          className="font-medium text-gray-700 hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openDetails(guardrail.guardrail_id);
+                          }}
+                        >
+                          View details
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </section>
         )}
 
-        {screen === "create" && createOption && createOption !== "ai" && (
-          <aside className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        {((screen === "create" && createOption && createOption !== "ai") || screen === "edit") && (
+          <aside className="rounded border border-gray-200 bg-white p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                {createOption === "template" ? "Use Template" : "Create Own"}
-              </p>
-              <h3 className="mt-2 text-lg font-bold text-ink">
-                {createOption === "template" ? "Start from a UMAI template" : "Build from scratch"}
+              <h3 className="text-base font-semibold text-gray-900">
+                {screen === "edit"
+                  ? `New version v${resolvedVersion}`
+                  : createOption === "template"
+                    ? "Start from a UMAI template"
+                    : "Build from scratch"}
               </h3>
-              <p className="mt-1 text-xs text-slate">
-                {createOption === "template"
-                  ? "Pick a template first, then review policies, pre-AI filters, and runtime settings."
-                  : "Configure the guardrail basics, policies, pre-AI filters, and runtime settings manually."}
+              <p className="mt-1 text-sm text-gray-500">
+                {screen === "edit"
+                  ? "Adjust policies, pre-AI filters and LLM config. The current version stays live until you publish the new one."
+                  : createOption === "template"
+                    ? "Pick a template first, then review policies, pre-AI filters, and runtime settings."
+                    : "Configure the guardrail basics, policies, pre-AI filters, and runtime settings manually."}
               </p>
             </div>
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="rounded-xl border border-slate/10 px-4 py-2 text-xs font-bold text-slate hover:bg-slate/5"
-                onClick={() => setCreateOption(null)}
-              >
-                Change option
-              </button>
-              <div className="flex items-center gap-2 text-[11px] text-slate">
+              <span className="text-xs text-gray-500">
                 Step {wizardDisplayStep} of {visibleWizardSteps.length}
-              </div>
+              </span>
+              {screen !== "edit" && (
+                <button
+                  type="button"
+                  className={BTN_SECONDARY}
+                  onClick={() => setCreateOption(null)}
+                >
+                  Change option
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate">
-            {visibleWizardSteps.map((step) => (
-              <span
-                key={step.id}
-                className={`rounded-full px-3 py-1 ${
-                  wizardStep === step.id
-                    ? "bg-accent text-white"
-                    : wizardStep > step.id
-                      ? "bg-accent/10 text-accent"
-                      : "bg-slate/10 text-slate/60"
-                }`}
-              >
-                {step.label}
-              </span>
-            ))}
-          </div>
+          <ol className="mt-5 flex flex-wrap gap-x-6 gap-y-2" aria-label="Steps">
+            {visibleWizardSteps.map((step, index) => {
+              const state =
+                wizardStep === step.id ? "current" : wizardStep > step.id ? "done" : "todo";
+              return (
+                <li key={step.id} className="flex items-center gap-2 text-xs">
+                  <span
+                    className={`flex h-5 w-5 items-center justify-center rounded-full border text-xs font-medium ${
+                      state === "current"
+                        ? "border-secondary bg-secondary text-white"
+                        : state === "done"
+                          ? "border-secondary text-secondary"
+                          : "border-gray-300 text-gray-400"
+                    }`}
+                    aria-current={state === "current" ? "step" : undefined}
+                  >
+                    {index + 1}
+                  </span>
+                  <span
+                    className={
+                      state === "current"
+                        ? "font-semibold text-gray-900"
+                        : state === "done"
+                          ? "text-gray-700"
+                          : "text-gray-400"
+                    }
+                  >
+                    {step.label}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+
+          {screen === "edit" && loadingExistingConfig && (
+            <p className="mt-4 text-xs text-secondary">Loading current configuration…</p>
+          )}
 
           {wizardError && (
-            <div className="mt-4 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
+            <div className="mt-4 rounded border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
               {wizardError}
             </div>
           )}
@@ -2175,25 +2237,25 @@ export default function GuardrailsPage() {
           {wizardStep === 0 && createOption === "template" && (
             <div className="mt-6 space-y-6">
               <div>
-                <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                <p className="text-xs font-medium text-gray-500">
                   Start from a template
                 </p>
-                <p className="mt-2 text-xs text-slate">
+                <p className="mt-2 text-xs text-gray-600">
                   Templates ship with policies, fast pre-AI filters, and LLM config already tuned.
                 </p>
               </div>
 
               <div className="grid gap-4">
                 {libraryLoading ? (
-                  <div className="rounded-2xl border border-slate/10 bg-slate/5 px-4 py-6 text-center text-xs text-slate/60">
+                  <div className="rounded border border-gray-200 bg-gray-50 px-4 py-6 text-center text-xs text-gray-500">
                     Loading guardrail templates...
                   </div>
                 ) : libraryError ? (
-                  <div className="rounded-2xl border border-slate/10 bg-slate/5 px-4 py-6 text-center text-xs text-slate/60">
+                  <div className="rounded border border-gray-200 bg-gray-50 px-4 py-6 text-center text-xs text-gray-500">
                     {libraryError}
                   </div>
                 ) : guardrailLibrary.length === 0 ? (
-                  <div className="rounded-2xl border border-slate/10 bg-slate/5 px-4 py-6 text-center text-xs text-slate/60">
+                  <div className="rounded border border-gray-200 bg-gray-50 px-4 py-6 text-center text-xs text-gray-500">
                     No guardrail templates are available yet.
                   </div>
                 ) : (
@@ -2202,43 +2264,43 @@ export default function GuardrailsPage() {
                     return (
                       <div
                         key={template.template_id}
-                        className="rounded-2xl border border-slate/10 bg-white px-5 py-4 shadow-sm"
+                        className="rounded border border-gray-200 bg-white px-5 py-4"
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div>
-                            <p className="text-sm font-semibold text-ink">{template.name}</p>
-                            <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-slate/50">
+                            <p className="text-sm font-semibold text-gray-900">{template.name}</p>
+                            <p className="mt-1 font-mono text-xs text-gray-500">
                               {template.default_guardrail_id}
                             </p>
                           </div>
-                          <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
+                          <span className="rounded bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
                             {template.mode}
                           </span>
                         </div>
                         {template.description && (
-                          <p className="mt-3 text-xs text-slate">{template.description}</p>
+                          <p className="mt-3 text-xs text-gray-600">{template.description}</p>
                         )}
-                        <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-semibold text-slate/70">
+                        <div className="mt-4 flex flex-wrap gap-2 text-xs font-medium text-gray-500">
                           {template.phases.map((phase) => (
-                            <span key={phase} className="rounded-full bg-slate/10 px-2 py-1">
+                            <span key={phase} className="rounded bg-gray-100 px-2 py-1">
                               {PHASE_LABELS[phase]}
                             </span>
                           ))}
                           {template.managed && (
-                            <span className="rounded-full bg-slate/10 px-2 py-1">Managed</span>
+                            <span className="rounded bg-gray-100 px-2 py-1">Managed</span>
                           )}
                         </div>
                         <div className="mt-4 flex flex-wrap gap-2">
                           <button
                             type="button"
-                            className="flex-1 rounded-xl border border-slate/10 px-4 py-2 text-xs font-bold text-slate hover:bg-slate/5"
+                            className="flex-1 rounded border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
                             onClick={() => applyTemplateSettings(template)}
                           >
                             Use template
                           </button>
                           <button
                             type="button"
-                            className="flex-1 rounded-xl bg-accent px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-accent/90"
+                            className="flex-1 rounded bg-secondary px-4 py-2 text-sm font-medium text-white transition hover:bg-secondary/90"
                             disabled={isDeploying}
                             onClick={() => handleDeployGuardrail(template)}
                           >
@@ -2256,8 +2318,8 @@ export default function GuardrailsPage() {
 
           {wizardStep === 1 && (
             <div className="mt-6 space-y-6">
-              <div className="rounded-2xl border border-slate/10 bg-slate/5 p-4 space-y-4">
-                <div className="flex flex-wrap gap-4 text-xs text-slate">
+              <div className="rounded border border-gray-200 bg-gray-50 p-4 space-y-4">
+                <div className="flex flex-wrap gap-4 text-xs text-gray-600">
                   <label className="flex items-center gap-2">
                     <input
                       type="radio"
@@ -2293,11 +2355,11 @@ export default function GuardrailsPage() {
 
                 {wizardMode === "existing" ? (
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Guardrail to update
                     </label>
                     <select
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={wizardGuardrailId}
                       onChange={(event) => void loadExistingGuardrailConfig(event.target.value)}
                     >
@@ -2308,11 +2370,11 @@ export default function GuardrailsPage() {
                         </option>
                       ))}
                     </select>
-                    <p className="text-[11px] text-slate/60">
+                    <p className="text-xs text-gray-500">
                       A new version will be created for the selected guardrail.
                     </p>
                     {loadingExistingConfig && (
-                      <p className="text-[11px] text-accent">
+                      <p className="text-xs text-secondary">
                         Loading current guardrail settings...
                       </p>
                     )}
@@ -2320,26 +2382,26 @@ export default function GuardrailsPage() {
                 ) : (
                   <div className="space-y-4">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                      <label className="text-xs font-medium text-gray-500">
                         Guardrail ID
                       </label>
                       <input
-                        className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                        className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                         value={guardrailId}
                         onChange={(event) => setGuardrailId(event.target.value)}
                         placeholder="gr-main-chat"
                       />
-                      <p className={`text-[11px] ${guardrailIdStatus.tone}`}>
+                      <p className={`text-xs ${guardrailIdStatus.tone}`}>
                         {guardrailIdStatus.message}
                       </p>
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                      <label className="text-xs font-medium text-gray-500">
                         Guardrail Name
                       </label>
                       <input
-                        className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                        className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                         value={guardrailName}
                         onChange={(event) => setGuardrailName(event.target.value)}
                         placeholder="Primary Chat Guardrail"
@@ -2347,11 +2409,11 @@ export default function GuardrailsPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                      <label className="text-xs font-medium text-gray-500">
                         Mode
                       </label>
                       <select
-                        className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                        className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                         value={guardrailMode}
                         onChange={(event) =>
                           setGuardrailMode(event.target.value as Guardrail["mode"])
@@ -2360,7 +2422,7 @@ export default function GuardrailsPage() {
                         <option value="ENFORCE">ENFORCE (blocks)</option>
                         <option value="MONITOR">MONITOR (observe only)</option>
                       </select>
-                      <p className="text-[11px] text-slate/60">
+                      <p className="text-xs text-gray-500">
                         ENFORCE blocks traffic. MONITOR logs decisions without blocking.
                       </p>
                     </div>
@@ -2372,9 +2434,9 @@ export default function GuardrailsPage() {
 
           {wizardStep === 2 && (
             <div className="mt-6 space-y-6">
-              {createOption !== "template" && (
+              {createOption !== "template" && screen !== "edit" && (
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <p className="text-xs font-medium text-gray-500">
                     Quick-start presets
                   </p>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -2383,53 +2445,53 @@ export default function GuardrailsPage() {
                         key={preset.id}
                         type="button"
                         onClick={() => applyQuickStart(preset.id)}
-                        className={`rounded-2xl border px-4 py-3 text-left transition ${
+                        className={`rounded border px-4 py-3 text-left transition ${
                           quickStartId === preset.id
-                            ? "border-accent/40 bg-accent/5"
-                            : "border-slate/10 bg-white"
+                            ? "border-secondary/40 bg-secondary/5"
+                            : "border-gray-200 bg-white"
                         }`}
                       >
-                        <p className="text-sm font-semibold text-ink">{preset.label}</p>
-                        <p className="mt-1 text-xs text-slate">{preset.description}</p>
+                        <p className="text-sm font-semibold text-gray-900">{preset.label}</p>
+                        <p className="mt-1 text-xs text-gray-600">{preset.description}</p>
                       </button>
                     ))}
                   </div>
-                  <p className="mt-3 text-[11px] text-slate/60">
+                  <p className="mt-3 text-xs text-gray-500">
                     Presets pick policies already in this project. You can still customize below.
                   </p>
                 </div>
               )}
 
-              <div className="rounded-2xl border border-slate/10 bg-slate/5 p-4 space-y-3">
+              <div className="rounded border border-gray-200 bg-gray-50 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <p className="text-xs font-medium text-gray-500">
                     Policies in scope
                   </p>
-                  <span className="text-[11px] text-slate/60">
+                  <span className="text-xs text-gray-500">
                     {policies.length} available
                   </span>
                 </div>
 
                 <input
-                  className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                  className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                   placeholder="Search policies by name or ID"
                   value={policySearch}
                   onChange={(event) => setPolicySearch(event.target.value)}
                 />
                 {createOption === "template" && (
-                  <p className="text-[11px] text-slate/60">
+                  <p className="text-xs text-gray-500">
                     Template policies are already selected. Add or remove policies only if you want
                     to customize this template.
                   </p>
                 )}
                 {requiredPolicyIds.length > 0 && (
-                  <p className="text-[11px] text-slate/60">
+                  <p className="text-xs text-gray-500">
                     Organization and environment policies are required and cannot be removed.
                   </p>
                 )}
 
                 {policies.length === 0 ? (
-                  <div className="rounded-xl border border-slate/10 bg-white px-4 py-4 text-xs text-slate/60">
+                  <div className="rounded border border-gray-200 bg-white px-4 py-4 text-xs text-gray-500">
                     No policies available yet. Create policies first, then attach them here.
                   </div>
                 ) : (
@@ -2440,7 +2502,7 @@ export default function GuardrailsPage() {
                       return (
                         <label
                           key={policy.policy_id}
-                          className="flex items-start gap-3 rounded-xl border border-slate/10 bg-white px-3 py-3"
+                          className="flex items-start gap-3 rounded border border-gray-200 bg-white px-3 py-3"
                         >
                           <input
                             type="checkbox"
@@ -2449,18 +2511,18 @@ export default function GuardrailsPage() {
                             onChange={() => togglePolicy(policy.policy_id)}
                           />
                           <div>
-                            <p className="text-sm font-semibold text-ink">{policy.name}</p>
-                            <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-slate/50">
+                            <p className="text-sm font-semibold text-gray-900">{policy.name}</p>
+                            <p className="mt-1 font-mono text-xs text-gray-500">
                               {policy.policy_id}
                             </p>
-                            <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate">
-                              <span className="rounded-full bg-slate/10 px-2 py-1">
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
+                              <span className="rounded bg-gray-100 px-2 py-1">
                                 {policy.type === "HEURISTIC"
                                   ? "Fast pattern check"
                                   : "AI-assisted decision"}
                               </span>
                               {policy.scope && (
-                                <span className="rounded-full bg-slate/10 px-2 py-1">
+                                <span className="rounded bg-gray-100 px-2 py-1">
                                   {policy.scope === "ORGANIZATION"
                                     ? "Organization"
                                     : policy.scope === "ENVIRONMENT"
@@ -2469,12 +2531,12 @@ export default function GuardrailsPage() {
                                 </span>
                               )}
                               {isRequired && (
-                                <span className="rounded-full bg-accent/10 px-2 py-1 text-accent">
+                                <span className="rounded bg-secondary/10 px-2 py-1 text-secondary">
                                   Required
                                 </span>
                               )}
                               {policy.phases.map((phase) => (
-                                <span key={phase} className="rounded-full bg-slate/10 px-2 py-1">
+                                <span key={phase} className="rounded bg-gray-100 px-2 py-1">
                                   {PHASE_LABELS[phase]} ({phase})
                                 </span>
                               ))}
@@ -2487,7 +2549,7 @@ export default function GuardrailsPage() {
                 )}
 
                 {missingPolicyIds.length > 0 && (
-                  <div className="rounded-xl border border-accent/30 bg-accent/5 px-3 py-2 text-[11px] text-accent">
+                  <div className="rounded border border-secondary/30 bg-secondary/5 px-3 py-2 text-xs text-secondary">
                     {selectedTemplate
                       ? `${missingPolicyIds.length} policies are missing locally and will be created from the selected template.`
                       : `${missingPolicyIds.length} policies are missing locally. Deploy them before continuing.`}
@@ -2499,23 +2561,23 @@ export default function GuardrailsPage() {
 
           {wizardStep === 3 && (
             <div className="mt-6 space-y-6">
-              <div className="rounded-2xl border border-slate/10 bg-slate/5 p-4 space-y-4">
+              <div className="rounded border border-gray-200 bg-gray-50 p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <p className="text-xs font-medium text-gray-500">
                     Pre-AI Request Filters
                   </p>
-                  <span className="text-[11px] text-slate/60">Runs before the policy engine</span>
+                  <span className="text-xs text-gray-500">Runs before the policy engine</span>
                 </div>
 
-                <div className="rounded-xl border border-slate/10 bg-white p-4">
-                  <p className="text-xs font-semibold text-ink">
+                <div className="rounded border border-gray-200 bg-white p-4">
+                  <p className="text-xs font-semibold text-gray-900">
                     These are not the same as policies.
                   </p>
-                  <p className="mt-2 text-[11px] text-slate">
+                  <p className="mt-2 text-xs text-gray-600">
                     Pre-AI filters are lightweight exact-match or regex blockers for obvious prompt
                     patterns. They run first and fail fast.
                   </p>
-                  <p className="mt-2 text-[11px] text-slate">
+                  <p className="mt-2 text-xs text-gray-600">
                     Policies are the main guardrail rules attached to this guardrail. They can
                     evaluate richer logic before or after the AI call.
                   </p>
@@ -2523,24 +2585,24 @@ export default function GuardrailsPage() {
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Filter target
                     </label>
                     <select
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={preflightTarget}
                       onChange={(event) => setPreflightTarget(event.target.value as PreflightTarget)}
                     >
                       <option value="LAST_MESSAGE">Last user message</option>
                       <option value="FULL_HISTORY">Full conversation history</option>
                     </select>
-                    <p className="text-[11px] text-slate/60">
+                    <p className="text-xs text-gray-500">
                       Choose which request text is scanned before the normal policy checks run.
                     </p>
                   </div>
 
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Scan length limit
                     </label>
                     <input
@@ -2551,7 +2613,7 @@ export default function GuardrailsPage() {
                       value={Number(preflightMaxLength) || 0}
                       onChange={(event) => setPreflightMaxLength(event.target.value)}
                     />
-                    <div className="flex items-center justify-between text-[11px] text-slate/60">
+                    <div className="flex items-center justify-between text-xs text-gray-500">
                       <span>0</span>
                       <span>{preflightMaxLength || "0"} chars</span>
                       <span>20k</span>
@@ -2560,7 +2622,7 @@ export default function GuardrailsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <p className="text-xs font-medium text-gray-500">
                     Filter rule templates
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -2569,7 +2631,7 @@ export default function GuardrailsPage() {
                         key={template.id}
                         type="button"
                         title={`${template.description} Example: ${template.example}`}
-                        className="rounded-full border border-slate/10 bg-white px-3 py-1 text-[10px] font-semibold text-slate"
+                        className="rounded border border-gray-200 bg-white px-3 py-1 text-xs font-medium text-gray-600"
                         onClick={() => addPreflightTemplate(template.id)}
                       >
                         + {template.label}
@@ -2582,13 +2644,13 @@ export default function GuardrailsPage() {
                   {preflightRules.map((rule, index) => (
                     <div
                       key={`preflight-rule-${index}`}
-                      className="rounded-xl border border-slate/10 bg-white p-3 space-y-3"
+                      className="rounded border border-gray-200 bg-white p-3 space-y-3"
                     >
                       <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-ink">Filter rule {index + 1}</p>
+                        <p className="text-xs font-semibold text-gray-900">Filter rule {index + 1}</p>
                         <button
                           type="button"
-                          className="text-[10px] font-semibold text-danger"
+                          className="text-xs font-medium text-danger"
                           onClick={() => removePreflightRule(index)}
                         >
                           Remove
@@ -2597,22 +2659,22 @@ export default function GuardrailsPage() {
 
                       <div className="grid gap-3 md:grid-cols-2">
                         <div className="space-y-1">
-                          <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                          <label className="text-xs font-medium text-gray-500">
                             Rule ID
                           </label>
                           <input
-                            className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                            className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                             value={rule.id}
                             onChange={(event) => updatePreflightRule(index, "id", event.target.value)}
                             placeholder="preflight-ignore-instructions"
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                          <label className="text-xs font-medium text-gray-500">
                             Match mode
                           </label>
                           <select
-                            className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                            className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                             value={rule.mode}
                             onChange={(event) =>
                               updatePreflightRule(index, "mode", event.target.value as PreflightRule["mode"])
@@ -2625,18 +2687,18 @@ export default function GuardrailsPage() {
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                        <label className="text-xs font-medium text-gray-500">
                           Pattern
                         </label>
                         <input
-                          className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                          className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                           value={rule.pattern}
                           onChange={(event) => updatePreflightRule(index, "pattern", event.target.value)}
                           placeholder="ignore previous instructions"
                         />
                       </div>
 
-                      <label className="flex items-center gap-2 text-xs text-slate">
+                      <label className="flex items-center gap-2 text-xs text-gray-600">
                         <input
                           type="checkbox"
                           checked={rule.block_on_match}
@@ -2650,16 +2712,16 @@ export default function GuardrailsPage() {
 
                 <button
                   type="button"
-                  className="w-full rounded-xl border border-slate/10 px-4 py-2 text-xs font-bold text-slate hover:bg-slate/5"
+                  className="w-full rounded border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
                   onClick={addPreflightRule}
                 >
                   + Add Filter Rule
                 </button>
 
-                <div className="rounded-xl border border-slate/10 bg-white p-3">
+                <div className="rounded border border-gray-200 bg-white p-3">
                   <button
                     type="button"
-                    className="text-xs font-semibold text-slate"
+                    className="text-xs font-semibold text-gray-600"
                     onClick={() => {
                       setPreflightAdvanced((current) => !current);
                       setPreflightJsonTouched(false);
@@ -2671,7 +2733,7 @@ export default function GuardrailsPage() {
                   {preflightAdvanced && (
                     <div className="mt-3 space-y-2">
                       <textarea
-                        className="h-40 w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-xs font-mono"
+                        className="h-40 w-full rounded border border-gray-200 bg-white px-3 py-2 text-xs font-mono"
                         value={preflightJsonText}
                         onChange={(event) => {
                           setPreflightJsonText(event.target.value);
@@ -2680,7 +2742,7 @@ export default function GuardrailsPage() {
                       />
                       <button
                         type="button"
-                        className="text-[11px] font-semibold text-slate"
+                        className="text-xs font-medium text-gray-600"
                         onClick={() => {
                           setPreflightJsonText(JSON.stringify(preflightPreview, null, 2));
                           setPreflightJsonTouched(false);
@@ -2697,22 +2759,22 @@ export default function GuardrailsPage() {
 
           {wizardStep === 4 && (
             <div className="mt-6 space-y-6">
-              <div className="rounded-2xl border border-slate/10 bg-slate/5 p-4 space-y-4">
+              <div className="rounded border border-gray-200 bg-gray-50 p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <p className="text-xs font-medium text-gray-500">
                     LLM provider
                   </p>
-                  <span className="text-[11px] text-slate/60">
+                  <span className="text-xs text-gray-500">
                     Used by context-aware policies
                   </span>
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <label className="text-xs font-medium text-gray-500">
                     Preset
                   </label>
                   <select
-                    className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                    className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                     value={llmPresetId}
                     onChange={(event) => applyLlmPreset(event.target.value)}
                   >
@@ -2722,29 +2784,29 @@ export default function GuardrailsPage() {
                       </option>
                     ))}
                   </select>
-                  <p className="text-[11px] text-slate/60">
+                  <p className="text-xs text-gray-500">
                     {LLM_PRESETS.find((preset) => preset.id === llmPresetId)?.description}
                   </p>
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Provider ID
                     </label>
                     <input
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={llmProvider}
                       onChange={(event) => setLlmProvider(event.target.value)}
                       placeholder="OSS_ROUTER"
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Model
                     </label>
                     <input
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={llmModel}
                       onChange={(event) => setLlmModel(event.target.value)}
                       placeholder="gpt-4o-mini"
@@ -2753,16 +2815,16 @@ export default function GuardrailsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <label className="text-xs font-medium text-gray-500">
                     Base URL
                   </label>
                   <input
-                    className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                    className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                     value={llmBaseUrl}
                     onChange={(event) => setLlmBaseUrl(event.target.value)}
                     placeholder="https://api.openai.com/v1"
                   />
-                  <p className="text-[11px] text-slate/60">
+                  <p className="text-xs text-gray-500">
                     Must be OpenAI-compatible. Choose whether the endpoint uses no auth,
                     bearer auth, or a custom header.
                   </p>
@@ -2770,23 +2832,23 @@ export default function GuardrailsPage() {
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Timeout (ms)
                     </label>
                     <input
                       type="number"
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={llmTimeout}
                       onChange={(event) => setLlmTimeout(event.target.value)}
                       min={100}
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Auth type
                     </label>
                     <select
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={llmAuthType}
                       onChange={(event) =>
                         setLlmAuthType(event.target.value as "none" | "bearer" | "header")
@@ -2801,11 +2863,11 @@ export default function GuardrailsPage() {
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Secret env
                     </label>
                     <input
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={llmAuthSecretEnv}
                       onChange={(event) => setLlmAuthSecretEnv(event.target.value)}
                       placeholder={llmAuthType === "none" ? "Not required" : "LLM_API_KEY"}
@@ -2813,11 +2875,11 @@ export default function GuardrailsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <label className="text-xs font-medium text-gray-500">
                       Header name
                     </label>
                     <input
-                      className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                      className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                       value={llmAuthHeaderName}
                       onChange={(event) => setLlmAuthHeaderName(event.target.value)}
                       placeholder={llmAuthType === "header" ? "api-key" : "Only for custom header auth"}
@@ -2826,10 +2888,10 @@ export default function GuardrailsPage() {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-slate/10 bg-white p-3">
+                <div className="rounded border border-gray-200 bg-white p-3">
                   <button
                     type="button"
-                    className="text-xs font-semibold text-slate"
+                    className="text-xs font-semibold text-gray-600"
                     onClick={() => {
                       setLlmAdvanced((current) => !current);
                       setLlmJsonTouched(false);
@@ -2841,7 +2903,7 @@ export default function GuardrailsPage() {
                   {llmAdvanced && (
                     <div className="mt-3 space-y-2">
                       <textarea
-                        className="h-36 w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-xs font-mono"
+                        className="h-36 w-full rounded border border-gray-200 bg-white px-3 py-2 text-xs font-mono"
                         value={llmJsonText}
                         onChange={(event) => {
                           setLlmJsonText(event.target.value);
@@ -2850,7 +2912,7 @@ export default function GuardrailsPage() {
                       />
                       <button
                         type="button"
-                        className="text-[11px] font-semibold text-slate"
+                        className="text-xs font-medium text-gray-600"
                         onClick={() => {
                           setLlmJsonText(JSON.stringify(llmPreview, null, 2));
                           setLlmJsonTouched(false);
@@ -2867,45 +2929,45 @@ export default function GuardrailsPage() {
 
           {wizardStep === 5 && (
             <div className="mt-6 space-y-6">
-              <div className="rounded-2xl border border-slate/10 bg-slate/5 p-4 space-y-4">
+              <div className="rounded border border-gray-200 bg-gray-50 p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <p className="text-xs font-medium text-gray-500">
                     Review summary
                   </p>
-                  <span className="text-[11px] text-slate/60">Version {resolvedVersion}</span>
+                  <span className="text-xs text-gray-500">Version {resolvedVersion}</span>
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <p className="text-xs font-medium text-gray-500">
                       Guardrail
                     </p>
-                    <p className="mt-2 text-sm font-semibold text-ink">
+                    <p className="mt-2 text-sm font-semibold text-gray-900">
                       {wizardMode === "new"
                         ? guardrailNameTrimmed || "Not set"
                         : selectedWizardGuardrail?.name || "Not set"}
                     </p>
-                    <p className="mt-1 text-xs text-slate">
+                    <p className="mt-1 text-xs text-gray-600">
                       {wizardMode === "new"
                         ? guardrailIdTrimmed || "Not set"
                         : wizardGuardrailId || "Not set"}
                     </p>
-                    <p className="mt-2 text-xs text-slate">
+                    <p className="mt-2 text-xs text-gray-600">
                       Mode: {wizardMode === "new" ? guardrailMode : selectedWizardGuardrail?.mode}
                     </p>
                   </div>
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                    <p className="text-xs font-medium text-gray-500">
                       Policies
                     </p>
-                    <p className="mt-2 text-sm font-semibold text-ink">
+                    <p className="mt-2 text-sm font-semibold text-gray-900">
                       {selectedPolicyIds.length} selected
                     </p>
-                    <p className="mt-1 text-xs text-slate">
+                    <p className="mt-1 text-xs text-gray-600">
                       {phaseSummaryText}
                     </p>
                     {missingPolicyIds.length > 0 && (
-                      <p className="mt-2 text-xs text-accent">
+                      <p className="mt-2 text-xs text-secondary">
                         {selectedTemplate
                           ? `${missingPolicyIds.length} policies will be created from the template.`
                           : `${missingPolicyIds.length} policies are missing and must be deployed.`}
@@ -2914,11 +2976,11 @@ export default function GuardrailsPage() {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-slate/10 bg-white p-3">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                <div className="rounded border border-gray-200 bg-white p-3">
+                  <p className="text-xs font-medium text-gray-500">
                     What this will do
                   </p>
-                  <p className="mt-2 text-xs text-slate">
+                  <p className="mt-2 text-xs text-gray-600">
                     This guardrail first applies fast request filters to the{" "}
                     {preflightTarget === "LAST_MESSAGE" ? "last user message" : "full history"} and
                     then runs {selectedPolicyIds.length} attached policies.
@@ -2929,28 +2991,28 @@ export default function GuardrailsPage() {
                 </div>
 
                 <div className="grid gap-4 md:grid-cols-2">
-                  <div className="rounded-xl border border-slate/10 bg-white p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <div className="rounded border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-medium text-gray-500">
                       Pre-AI filter preview
                     </p>
-                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-slate/5 px-3 py-2 text-[11px] text-slate">
+                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-gray-50 px-3 py-2 text-xs text-gray-600">
                       {formatJson(preflightPreview)}
                     </pre>
                   </div>
-                  <div className="rounded-xl border border-slate/10 bg-white p-3">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <div className="rounded border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-medium text-gray-500">
                       Policy names
                     </p>
                     {reviewPolicies.length === 0 ? (
-                      <p className="mt-2 text-xs text-slate">No policies selected.</p>
+                      <p className="mt-2 text-xs text-gray-600">No policies selected.</p>
                     ) : (
                       <div className="mt-2 space-y-2">
                         {reviewPolicies.map((policy) => (
                           <div
                             key={policy.policy_id}
-                            className="rounded-lg bg-slate/5 px-3 py-2 text-[11px] text-slate"
+                            className="rounded bg-gray-50 px-3 py-2 text-xs text-gray-600"
                           >
-                            <p className="font-semibold text-ink">{policy.name}</p>
+                            <p className="font-semibold text-gray-900">{policy.name}</p>
                             <p className="mt-1">{policy.policy_id}</p>
                             <p className="mt-1">
                               {policy.phases.map((phase) => PHASE_LABELS[phase]).join(" | ")}
@@ -2963,12 +3025,12 @@ export default function GuardrailsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
+                  <label className="text-xs font-medium text-gray-500">
                     Version override (optional)
                   </label>
                   <input
                     type="number"
-                    className="w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm"
+                    className="w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm"
                     value={versionOverride}
                     onChange={(event) => setVersionOverride(event.target.value)}
                     min={1}
@@ -2976,7 +3038,7 @@ export default function GuardrailsPage() {
                   />
                 </div>
 
-                <label className="flex items-center gap-2 text-xs text-slate">
+                <label className="flex items-center gap-2 text-xs text-gray-600">
                   <input
                     type="checkbox"
                     checked={publishNow}
@@ -2986,14 +3048,14 @@ export default function GuardrailsPage() {
                   Publish immediately (updates current version)
                 </label>
                 {wizardMode === "new" && (
-                  <p className="text-[11px] text-slate/60">
+                  <p className="text-xs text-gray-500">
                     First versions auto-publish when created.
                   </p>
                 )}
                 {wizardMode === "existing" && (
-                  <p className="text-[11px] text-slate/60">
-                    Existing guardrails now load from the current snapshot. If you publish here,
-                    the new version is approved with your current operator identity.
+                  <p className="text-xs text-gray-500">
+                    Publishing makes v{resolvedVersion} the live version immediately. Otherwise the
+                    version is saved and can be published later from the guardrail details.
                   </p>
                 )}
               </div>
@@ -3004,14 +3066,14 @@ export default function GuardrailsPage() {
             <div className="mt-6 flex items-center justify-between">
               <button
                 type="button"
-                className="rounded-xl border border-slate/10 px-4 py-2 text-xs font-bold text-slate hover:bg-slate/5"
+                className="rounded border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
                 onClick={handleBack}
               >
                 Back
               </button>
               <button
                 type="button"
-                className="rounded-xl bg-accent px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-accent/90"
+                className="rounded bg-secondary px-4 py-2 text-sm font-medium text-white transition hover:bg-secondary/90"
                 onClick={handleNext}
               >
                 Next
@@ -3023,18 +3085,26 @@ export default function GuardrailsPage() {
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
-                className="rounded-xl border border-slate/10 px-4 py-2 text-xs font-bold text-slate hover:bg-slate/5"
+                className="rounded border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50"
                 onClick={handleBack}
               >
                 Back
               </button>
               <button
                 type="button"
-                className="rounded-xl bg-accent px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-accent/90"
+                className="rounded bg-secondary px-4 py-2 text-sm font-medium text-white transition hover:bg-secondary/90"
                 disabled={submitting}
                 onClick={handleWizardSubmit}
               >
-                {submitting ? "Saving..." : publishNow ? "Create & publish" : "Create version"}
+                {submitting
+                  ? "Saving…"
+                  : screen === "edit"
+                    ? publishNow
+                      ? `Save & publish v${resolvedVersion}`
+                      : `Save v${resolvedVersion}`
+                    : publishNow
+                      ? "Create & publish"
+                      : "Create version"}
               </button>
             </div>
           )}
@@ -3047,21 +3117,21 @@ export default function GuardrailsPage() {
           {toastItems.map((toast) => (
             <div
               key={toast.id}
-              className={`pointer-events-auto rounded-2xl border px-4 py-3 backdrop-blur ${TOAST_STYLES[toast.tone]}`}
+              className={`pointer-events-auto rounded border px-4 py-3 ${TOAST_STYLES[toast.tone]}`}
               role={toast.tone === "error" ? "alert" : "status"}
             >
               <div className="flex items-start gap-3">
                 <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/80">
+                  <p className="text-xs font-medium text-white/80">
                     {TOAST_LABELS[toast.tone]}
                   </p>
-                  <p className="mt-1 text-sm font-semibold leading-5 text-white">
+                  <p className="mt-1 text-sm leading-5 text-white">
                     {toast.message}
                   </p>
                 </div>
                 <button
                   type="button"
-                  className="rounded-full px-2 py-1 text-xs font-bold text-white/80 transition hover:bg-white/10 hover:text-white"
+                  className="rounded px-2 py-1 text-xs font-medium text-white/80 transition hover:bg-white/10 hover:text-white"
                   onClick={() => dismissToast(toast.id)}
                   aria-label="Dismiss notification"
                 >
@@ -3075,42 +3145,39 @@ export default function GuardrailsPage() {
 
       {detailsOpen && selectedGuardrail ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[rgba(247,244,239,0.78)] px-4 py-6 backdrop-blur-sm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 px-4 py-6"
           onClick={closeDetails}
         >
           <div
-            className="flex h-[min(88vh,860px)] w-full max-w-6xl flex-col overflow-hidden rounded-[32px] border border-slate/10 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.10)]"
+            className="flex h-[min(88vh,860px)] w-full max-w-6xl flex-col overflow-hidden rounded border border-gray-200 bg-white"
             onClick={(event) => event.stopPropagation()}
             role="dialog"
             aria-modal="true"
             aria-label="Guardrail details"
           >
-            <div className="border-b border-slate/10 px-8 pb-5 pt-7">
+            <div className="border-b border-gray-200 px-6 pt-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                    Guardrail Details
-                  </p>
-                  <h3 className="mt-2 font-display text-2xl font-bold text-ink">
+                  <h3 className="text-lg font-semibold text-gray-900">
                     {selectedGuardrail.name}
                   </h3>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate">
-                    <span>{selectedGuardrail.guardrail_id}</span>
-                    <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-slate">
-                      {selectedGuardrail.mode}
-                    </span>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                    <span className="font-mono">{selectedGuardrail.guardrail_id}</span>
+                    <span className={TAG}>{selectedGuardrail.mode}</span>
                   </div>
                 </div>
               </div>
 
-              <div className="mt-5 flex flex-wrap items-center justify-between gap-4">
-                <div className="inline-flex rounded-full border border-slate/10 bg-slate/5 p-1">
+              <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
+                <div className="flex gap-6" role="tablist">
                   <button
                     type="button"
-                    className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                    role="tab"
+                    aria-selected={detailsTab === "overview"}
+                    className={`-mb-px border-b-2 pb-2.5 text-sm font-medium transition ${
                       detailsTab === "overview"
-                        ? "bg-white text-ink shadow-sm"
-                        : "text-slate hover:text-ink"
+                        ? "border-secondary text-gray-900"
+                        : "border-transparent text-gray-500 hover:text-gray-900"
                     }`}
                     onClick={() => setDetailsTab("overview")}
                   >
@@ -3118,10 +3185,12 @@ export default function GuardrailsPage() {
                   </button>
                   <button
                     type="button"
-                    className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
+                    role="tab"
+                    aria-selected={detailsTab === "policies"}
+                    className={`-mb-px border-b-2 pb-2.5 text-sm font-medium transition ${
                       detailsTab === "policies"
-                        ? "bg-white text-ink shadow-sm"
-                        : "text-slate hover:text-ink"
+                        ? "border-secondary text-gray-900"
+                        : "border-transparent text-gray-500 hover:text-gray-900"
                     }`}
                     onClick={() => setDetailsTab("policies")}
                   >
@@ -3131,13 +3200,13 @@ export default function GuardrailsPage() {
 
                 <div className="flex flex-wrap items-center gap-2">
                   {detailsTab === "policies" && filteredDetailsPolicies.length > 0 ? (
-                    <div className="flex items-center gap-2 text-xs text-slate">
+                    <div className="flex items-center gap-2 text-xs text-gray-600">
                       <span>
                         {safeDetailsPolicyIndex + 1} of {filteredDetailsPolicies.length}
                       </span>
                       <button
                         type="button"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate/10 text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-200 text-gray-600 transition hover:bg-gray-50 disabled:opacity-40"
                         onClick={() =>
                           setDetailsPolicyIndex((current) =>
                             filteredDetailsPolicies.length === 0
@@ -3167,7 +3236,7 @@ export default function GuardrailsPage() {
                       </button>
                       <button
                         type="button"
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate/10 text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-200 text-gray-600 transition hover:bg-gray-50 disabled:opacity-40"
                         onClick={() =>
                           setDetailsPolicyIndex((current) =>
                             filteredDetailsPolicies.length === 0
@@ -3198,48 +3267,44 @@ export default function GuardrailsPage() {
                     </div>
                   ) : null}
 
-                  <button
-                    type="button"
-                    className="rounded-full border border-slate/10 bg-white px-4 py-2 text-xs font-semibold text-ink shadow-sm transition hover:bg-slate/5"
-                    onClick={closeDetails}
-                  >
+                  <button type="button" className={`${BTN_SECONDARY} mb-2`} onClick={closeDetails}>
                     Close
                   </button>
                 </div>
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden px-8 pb-8 pt-6">
+            <div className="min-h-0 flex-1 overflow-hidden px-6 pb-6 pt-5">
               {snapshotError && (
-                <div className="mb-4 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
+                <div className="mb-4 rounded border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
                   {snapshotError}
                 </div>
               )}
 
               {snapshotLoading ? (
-                <div className="flex h-full items-center justify-center text-sm text-slate/50">
+                <div className="flex h-full items-center justify-center text-sm text-gray-500">
                   Loading snapshot details...
                 </div>
               ) : snapshot ? (
                 detailsTab === "overview" ? (
                   <div className="grid h-full gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
                     <div className="min-h-0 space-y-6 overflow-y-auto pr-1">
-                      <div className="rounded-[28px] border border-slate/10 bg-[linear-gradient(135deg,_#ffffff_0%,_#f9f7f1_100%)] p-5">
+                      <div className="rounded border border-gray-200 bg-white p-5">
                         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                            <p className="text-xs font-medium text-gray-500">
                               Current Version
                             </p>
-                            <p className="mt-2 text-lg font-semibold text-ink">
+                            <p className="mt-2 text-lg font-semibold text-gray-900">
                               v{selectedGuardrail.current_version}
                             </p>
                           </div>
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                            <p className="text-xs font-medium text-gray-500">
                               Snapshot Version
                             </p>
                             <select
-                              className="mt-2 w-full rounded-xl border border-slate/10 bg-white px-3 py-2 text-sm text-ink"
+                              className="mt-2 w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900"
                               value={detailsVersion ?? ""}
                               onChange={(event) =>
                                 setDetailsVersion(
@@ -3260,10 +3325,10 @@ export default function GuardrailsPage() {
                             </select>
                           </div>
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
-                              Redis Snapshot
+                            <p className="text-xs font-medium text-gray-500">
+                              Runtime status
                             </p>
-                            <p className="mt-2 text-sm font-semibold text-ink">
+                            <p className="mt-2 text-sm font-semibold text-gray-900">
                               {snapshot.redis_available
                                 ? snapshot.redis_present
                                   ? "Published"
@@ -3272,10 +3337,10 @@ export default function GuardrailsPage() {
                             </p>
                           </div>
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                            <p className="text-xs font-medium text-gray-500">
                               Attached Policies
                             </p>
-                            <p className="mt-2 text-sm font-semibold text-ink">
+                            <p className="mt-2 text-sm font-semibold text-gray-900">
                               {snapshot.snapshot.policies.length}
                             </p>
                           </div>
@@ -3287,7 +3352,7 @@ export default function GuardrailsPage() {
                             !snapshot.redis_present) ? (
                             <button
                               type="button"
-                              className="rounded-xl bg-ink px-4 py-2 text-[11px] font-bold text-white shadow-sm transition hover:bg-ink/90 disabled:opacity-60"
+                              className="rounded bg-secondary px-4 py-2 text-sm font-medium text-white transition hover:bg-secondary/90 disabled:opacity-60"
                               onClick={handlePublishSelectedVersion}
                               disabled={snapshotLoading || publishingDetailsVersion}
                             >
@@ -3300,37 +3365,32 @@ export default function GuardrailsPage() {
                           ) : null}
                           {detailsVersion === selectedGuardrail.current_version &&
                           snapshot.redis_present ? (
-                            <span className="rounded-full bg-emerald-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-700">
+                            <span className="rounded bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700">
                               Live version
-                            </span>
-                          ) : null}
-                          {snapshot.redis_key ? (
-                            <span className="text-[11px] text-slate/60">
-                              Redis key: {snapshot.redis_key}
                             </span>
                           ) : null}
                         </div>
                       </div>
 
                       <div className="grid gap-4 lg:grid-cols-2">
-                        <div className="rounded-3xl border border-slate/10 bg-slate/5 p-5">
-                          <p className="text-xs font-semibold text-ink">Preflight</p>
-                          <pre className="mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[11px] text-slate">
+                        <div className="rounded border border-gray-200 bg-gray-50 p-5">
+                          <p className="text-xs font-semibold text-gray-900">Preflight</p>
+                          <pre className="mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap rounded bg-white px-4 py-3 text-xs text-gray-600">
                             {formatJson(snapshot.snapshot.preflight)}
                           </pre>
                         </div>
 
-                        <div className="rounded-3xl border border-slate/10 bg-slate/5 p-5">
-                          <p className="text-xs font-semibold text-ink">LLM Config</p>
-                          <pre className="mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[11px] text-slate">
+                        <div className="rounded border border-gray-200 bg-gray-50 p-5">
+                          <p className="text-xs font-semibold text-gray-900">LLM Config</p>
+                          <pre className="mt-3 max-h-[260px] overflow-auto whitespace-pre-wrap rounded bg-white px-4 py-3 text-xs text-gray-600">
                             {formatJson(snapshot.snapshot.llm_config)}
                           </pre>
                         </div>
 
                         {snapshot.snapshot.agt ? (
-                          <div className="rounded-3xl border border-slate/10 bg-slate/5 p-5 lg:col-span-2">
-                            <p className="text-xs font-semibold text-ink">AGT Action Governance</p>
-                            <pre className="mt-3 max-h-[240px] overflow-auto whitespace-pre-wrap rounded-2xl bg-white px-4 py-3 text-[11px] text-slate">
+                          <div className="rounded border border-gray-200 bg-gray-50 p-5 lg:col-span-2">
+                            <p className="text-xs font-semibold text-gray-900">AGT Action Governance</p>
+                            <pre className="mt-3 max-h-[240px] overflow-auto whitespace-pre-wrap rounded bg-white px-4 py-3 text-xs text-gray-600">
                               {formatJson(snapshot.snapshot.agt)}
                             </pre>
                           </div>
@@ -3338,48 +3398,45 @@ export default function GuardrailsPage() {
                       </div>
                     </div>
 
-                    <aside className="min-h-0 rounded-[28px] border border-slate/10 bg-slate/5 p-5">
+                    <aside className="min-h-0 rounded border border-gray-200 bg-gray-50 p-5">
                       <div className="flex h-full flex-col">
                         <div>
-                          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                          <p className="text-xs font-medium text-gray-500">
                             Snapshot Overview
                           </p>
-                          <p className="mt-2 text-lg font-semibold text-ink">
+                          <p className="mt-2 text-lg font-semibold text-gray-900">
                             v{snapshot.version} configuration
-                          </p>
-                          <p className="mt-1 text-sm text-slate">
-                            Review phases and jump straight into the policy viewer when needed.
                           </p>
                         </div>
 
                         <div className="mt-5">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                          <p className="text-xs font-medium text-gray-500">
                             Active Phases
                           </p>
-                          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
+                          <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-gray-600">
                             {snapshot.snapshot.phases?.length ? (
                               snapshot.snapshot.phases.map((phase) => (
                                 <span
                                   key={phase}
-                                  className="rounded-full bg-white px-3 py-1 uppercase tracking-[0.2em]"
+                                  className="rounded bg-white px-2 py-0.5"
                                 >
                                   {PHASE_LABELS[phase]}
                                 </span>
                               ))
                             ) : (
-                              <span className="text-xs text-slate/60">No phases configured.</span>
+                              <span className="text-xs text-gray-500">No phases configured.</span>
                             )}
                           </div>
                         </div>
 
                         <div className="mt-5 min-h-0 flex-1">
                           <div className="flex items-center justify-between gap-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                            <p className="text-xs font-medium text-gray-500">
                               Policies In This Version
                             </p>
                             <button
                               type="button"
-                              className="text-[11px] font-semibold text-accent transition hover:text-ink"
+                              className="text-xs font-medium text-secondary transition hover:text-gray-900"
                               onClick={() => setDetailsTab("policies")}
                             >
                               Open policy view
@@ -3387,7 +3444,7 @@ export default function GuardrailsPage() {
                           </div>
                           <div className="mt-3 space-y-2 overflow-y-auto pr-1">
                             {snapshot.snapshot.policies.length === 0 ? (
-                              <div className="rounded-2xl border border-dashed border-slate/15 bg-white px-4 py-6 text-center text-xs text-slate/60">
+                              <div className="rounded border border-dashed border-gray-300 bg-white px-4 py-6 text-center text-xs text-gray-500">
                                 No policies are attached to this version.
                               </div>
                             ) : (
@@ -3395,7 +3452,7 @@ export default function GuardrailsPage() {
                                 <button
                                   key={policy.id}
                                   type="button"
-                                  className="w-full rounded-2xl border border-transparent bg-white px-4 py-3 text-left transition hover:border-slate/10 hover:bg-slate/5"
+                                  className="w-full rounded border border-transparent bg-white px-4 py-3 text-left transition hover:border-gray-200 hover:bg-gray-50"
                                   onClick={() => {
                                     setDetailsPolicyPhase("ALL");
                                     setDetailsPolicyIndex(index);
@@ -3404,14 +3461,14 @@ export default function GuardrailsPage() {
                                 >
                                   <div className="flex items-start justify-between gap-3">
                                     <div className="min-w-0">
-                                      <p className="truncate text-sm font-semibold text-ink">
+                                      <p className="truncate text-sm font-semibold text-gray-900">
                                         {policy.name}
                                       </p>
-                                      <p className="mt-1 truncate text-[10px] uppercase tracking-[0.25em] text-slate/50">
+                                      <p className="mt-1 truncate font-mono text-xs text-gray-500">
                                         {policy.id}
                                       </p>
                                     </div>
-                                    <span className="rounded-full bg-slate/10 px-2 py-1 text-[10px] font-bold text-slate">
+                                    <span className="rounded bg-gray-100 px-2 py-1 text-xs font-medium text-gray-600">
                                       {policy.type}
                                     </span>
                                   </div>
@@ -3428,10 +3485,10 @@ export default function GuardrailsPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        className={`rounded-full px-3 py-2 text-[11px] font-semibold transition ${
+                        className={`rounded px-3 py-2 text-xs font-medium transition ${
                           detailsPolicyPhase === "ALL"
-                            ? "bg-ink text-white"
-                            : "border border-slate/10 bg-white text-slate hover:bg-slate/5"
+                            ? "bg-secondary text-white"
+                            : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
                         }`}
                         onClick={() => setDetailsPolicyPhase("ALL")}
                       >
@@ -3441,10 +3498,10 @@ export default function GuardrailsPage() {
                         <button
                           key={phase}
                           type="button"
-                          className={`rounded-full px-3 py-2 text-[11px] font-semibold transition ${
+                          className={`rounded px-3 py-2 text-xs font-medium transition ${
                             detailsPolicyPhase === phase
-                              ? "bg-ink text-white"
-                              : "border border-slate/10 bg-white text-slate hover:bg-slate/5"
+                              ? "bg-secondary text-white"
+                              : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
                           }`}
                           onClick={() => setDetailsPolicyPhase(phase)}
                         >
@@ -3454,7 +3511,7 @@ export default function GuardrailsPage() {
                     </div>
 
                     {filteredDetailsPolicies.length === 0 ? (
-                      <div className="flex flex-1 items-center justify-center rounded-[28px] border border-dashed border-slate/15 bg-slate/5 px-6 text-sm text-slate/60">
+                      <div className="flex flex-1 items-center justify-center rounded border border-dashed border-gray-300 bg-gray-50 px-6 text-sm text-gray-500">
                         No policies match the selected phase.
                       </div>
                     ) : (
@@ -3462,7 +3519,7 @@ export default function GuardrailsPage() {
                         <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3">
                           <button
                             type="button"
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate/10 bg-white text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50 disabled:opacity-40"
                             onClick={() =>
                               setDetailsPolicyIndex((current) =>
                                 current === 0
@@ -3500,19 +3557,19 @@ export default function GuardrailsPage() {
                                 <button
                                   key={policy.id}
                                   type="button"
-                                  className={`w-[212px] shrink-0 rounded-[22px] border px-4 py-3 text-left transition ${
+                                  className={`w-[212px] shrink-0 rounded border px-4 py-3 text-left transition ${
                                     index === safeDetailsPolicyIndex
-                                      ? "border-ink bg-ink text-white shadow-sm"
-                                      : "border-slate/10 bg-white text-ink hover:border-slate/20 hover:bg-slate/5"
+                                      ? "border-secondary bg-secondary/5 text-gray-900"
+                                      : "border-gray-200 bg-white text-gray-900 hover:border-gray-300 hover:bg-gray-50"
                                   }`}
                                   onClick={() => setDetailsPolicyIndex(index)}
                                 >
                                   <p className="truncate text-sm font-semibold">{policy.name}</p>
                                   <p
-                                    className={`mt-1 truncate text-[10px] uppercase tracking-[0.2em] ${
+                                    className={`mt-1 truncate font-mono text-xs ${
                                       index === safeDetailsPolicyIndex
-                                        ? "text-white/70"
-                                        : "text-slate/50"
+                                        ? "text-gray-500"
+                                        : "text-gray-500"
                                     }`}
                                   >
                                     {policy.id}
@@ -3524,7 +3581,7 @@ export default function GuardrailsPage() {
 
                           <button
                             type="button"
-                            className="inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate/10 bg-white text-slate transition hover:bg-slate/5 disabled:opacity-40"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded border border-gray-200 bg-white text-gray-600 transition hover:bg-gray-50 disabled:opacity-40"
                             onClick={() =>
                               setDetailsPolicyIndex((current) =>
                                 current >= filteredDetailsPolicies.length - 1
@@ -3553,53 +3610,50 @@ export default function GuardrailsPage() {
                         </div>
 
                         <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-                          <div className="flex min-h-0 h-full flex-col rounded-[28px] border border-slate/10 bg-white p-5">
+                          <div className="flex min-h-0 h-full flex-col rounded border border-gray-200 bg-white p-5">
                             <div className="flex flex-wrap items-start justify-between gap-4">
                               <div className="min-w-0">
-                                <p className="text-lg font-semibold text-ink">
+                                <p className="text-lg font-semibold text-gray-900">
                                   {activeDetailsPolicy?.name}
                                 </p>
-                                <p className="mt-1 break-all text-[10px] uppercase tracking-[0.3em] text-slate/50">
+                                <p className="mt-1 break-all font-mono text-xs text-gray-500">
                                   {activeDetailsPolicy?.id}
                                 </p>
                               </div>
-                              <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
+                              <span className="rounded bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">
                                 {activeDetailsPolicy?.type}
                               </span>
                             </div>
 
-                            <pre className="mt-4 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded-2xl bg-slate/5 px-4 py-3 text-[11px] text-slate">
+                            <pre className="mt-4 min-h-0 flex-1 overflow-auto whitespace-pre-wrap rounded bg-gray-50 px-4 py-3 text-xs text-gray-600">
                               {formatJson(activeDetailsPolicy?.config)}
                             </pre>
                           </div>
 
-                          <aside className="rounded-[28px] border border-slate/10 bg-slate/5 p-5">
-                            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/50">
+                          <aside className="rounded border border-gray-200 bg-gray-50 p-5">
+                            <p className="text-xs font-medium text-gray-500">
                               Policy Summary
                             </p>
-                            <p className="mt-2 text-sm text-slate">
-                              Use the arrows to move through policies without scrolling the whole dialog.
-                            </p>
 
-                            <div className="mt-5 space-y-4 text-sm text-slate">
-                              <div className="rounded-2xl bg-white px-4 py-3">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate/50">
+                            <div className="mt-5 space-y-4 text-sm text-gray-600">
+                              <div className="rounded bg-white px-4 py-3">
+                                <p className="text-xs font-medium text-gray-500">
                                   Status
                                 </p>
-                                <p className="mt-2 font-semibold text-ink">
+                                <p className="mt-2 font-semibold text-gray-900">
                                   {activeDetailsPolicy?.enabled ? "Enabled" : "Disabled"}
                                 </p>
                               </div>
 
-                              <div className="rounded-2xl bg-white px-4 py-3">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate/50">
+                              <div className="rounded bg-white px-4 py-3">
+                                <p className="text-xs font-medium text-gray-500">
                                   Phases
                                 </p>
-                                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
+                                <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-gray-600">
                                   {activeDetailsPolicy?.phases?.map((phase) => (
                                     <span
                                       key={`${activeDetailsPolicy?.id ?? "policy"}-${phase}`}
-                                      className="rounded-full bg-slate/10 px-3 py-1"
+                                      className="rounded bg-gray-100 px-3 py-1"
                                     >
                                       {PHASE_LABELS[phase]}
                                     </span>
@@ -3607,11 +3661,11 @@ export default function GuardrailsPage() {
                                 </div>
                               </div>
 
-                              <div className="rounded-2xl bg-white px-4 py-3">
-                                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate/50">
+                              <div className="rounded bg-white px-4 py-3">
+                                <p className="text-xs font-medium text-gray-500">
                                   Position
                                 </p>
-                                <p className="mt-2 font-semibold text-ink">
+                                <p className="mt-2 font-semibold text-gray-900">
                                   {safeDetailsPolicyIndex + 1} / {filteredDetailsPolicies.length}
                                 </p>
                               </div>
@@ -3623,7 +3677,7 @@ export default function GuardrailsPage() {
                   </div>
                 )
               ) : (
-                <div className="flex h-full items-center justify-center text-sm text-slate/50">
+                <div className="flex h-full items-center justify-center text-sm text-gray-500">
                   No snapshot loaded yet.
                 </div>
               )}

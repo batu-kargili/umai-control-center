@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, MonitorCog, ShieldCheck } from "lucide-react";
+import { Loader2, ShieldCheck } from "lucide-react";
+import { BTN_PRIMARY, INPUT, InlineNotice, LABEL, SectionCard } from "src/app/(console)/console-ui";
 
 import {
   fetchGuardrails,
@@ -114,7 +115,7 @@ export default function ExtensionGuardrailControl({
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [status, setStatus] = useState<{ tone: StatusTone; text: string }>({
     tone: "idle",
-    text: "Select a guardrail to apply to the extension in this browser.",
+    text: "",
   });
   const [busy, setBusy] = useState(false);
 
@@ -300,56 +301,45 @@ export default function ExtensionGuardrailControl({
     }
   };
 
-  const statusColor =
-    status.tone === "ok"
-      ? "text-emerald-700"
-      : status.tone === "error"
-        ? "text-red-600"
-        : "text-slate";
-
   return (
-    <section className="rounded-3xl border border-secondary/10 bg-white p-5 shadow-sm">
-      <div className="flex items-start gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-secondary/10">
-          <MonitorCog className="h-5 w-5 text-secondary" />
-        </div>
-        <div className="flex-1">
-          <h3 className="font-semibold text-ink">Apply guardrail to this browser</h3>
-          <p className="mt-1 text-sm text-slate">
-            Re-binds the UMAI extension running in <span className="font-medium">this</span> browser
-            to the selected guardrail. Other users&apos; extensions are not affected.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <label className="flex flex-col gap-1 text-xs">
-          <span className="font-bold uppercase tracking-[0.2em] text-slate/60">Guardrail</span>
+    <SectionCard
+      title="Apply a guardrail to this browser"
+      description="Re-binds the UMAI extension running in this browser to the selected guardrail version. Other users are not affected; fleet-wide binding comes from the managed browser policy."
+    >
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_auto] xl:items-end">
+        <div>
+          <label className={LABEL} htmlFor="ext-guardrail">
+            Guardrail
+          </label>
           <select
+            id="ext-guardrail"
+            className={`${INPUT} mt-1`}
             value={guardrailId}
             onChange={(event) => setGuardrailId(event.target.value)}
             disabled={!ready || loadingGuardrails || busy || guardrails.length === 0}
-            className="h-9 rounded-xl border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none disabled:opacity-60"
           >
             {guardrails.length === 0 ? (
               <option value="">{loadingGuardrails ? "Loading…" : "No published guardrails"}</option>
             ) : (
               guardrails.map((g) => (
                 <option key={g.guardrail_id} value={g.guardrail_id}>
-                  {g.name ? `${g.name} (${g.guardrail_id})` : g.guardrail_id}
+                  {g.name || g.guardrail_id}
                 </option>
               ))
             )}
           </select>
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1 text-xs">
-          <span className="font-bold uppercase tracking-[0.2em] text-slate/60">Version</span>
+        <div>
+          <label className={LABEL} htmlFor="ext-version">
+            Version
+          </label>
           <select
+            id="ext-version"
+            className={`${INPUT} mt-1`}
             value={selectedVersion}
             onChange={(event) => setSelectedVersion(event.target.value)}
             disabled={!ready || loadingVersions || busy || !guardrailId}
-            className="h-9 rounded-xl border border-secondary/15 bg-white px-3 text-xs text-ink focus:border-secondary/40 focus:outline-none disabled:opacity-60"
           >
             <option value={LATEST_VERSION}>
               Latest published{selectedGuardrail ? ` (v${selectedGuardrail.current_version})` : ""}
@@ -360,43 +350,49 @@ export default function ExtensionGuardrailControl({
               </option>
             ))}
           </select>
-        </label>
+        </div>
 
-        <label className="flex flex-col gap-1 text-xs">
-          <span className="font-bold uppercase tracking-[0.2em] text-slate/60">Extension ID</span>
+        <div>
+          <label className={LABEL} htmlFor="ext-id">
+            Extension ID
+          </label>
           <input
+            id="ext-id"
             type="text"
+            className={`${INPUT} mt-1 font-mono text-xs`}
             value={extensionId}
             onChange={(event) => setExtensionId(event.target.value)}
             disabled={busy}
-            placeholder="chrome://extensions ID"
-            className="h-9 rounded-xl border border-secondary/15 bg-white px-3 font-mono text-[11px] text-ink focus:border-secondary/40 focus:outline-none disabled:opacity-60"
+            placeholder="from chrome://extensions"
+            spellCheck={false}
           />
-        </label>
-
-        <div className="flex items-end">
-          <button
-            type="button"
-            onClick={() => void apply()}
-            disabled={!ready || busy || !guardrailId}
-            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl bg-secondary px-4 text-xs font-semibold text-white shadow-accent transition hover:bg-secondary/90 disabled:opacity-60"
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
-            Apply to this browser
-          </button>
         </div>
+
+        <button
+          type="button"
+          className={BTN_PRIMARY}
+          onClick={() => void apply()}
+          disabled={!ready || busy || !guardrailId}
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+          Apply to this browser
+        </button>
       </div>
 
-      <p className={`mt-3 text-xs ${statusColor}`}>
-        {status.tone === "busy" ? (
-          <span className="inline-flex items-center gap-1">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {status.text}
-          </span>
-        ) : (
-          status.text
-        )}
-      </p>
-    </section>
+      {status.tone !== "idle" && (
+        <div className="mt-4">
+          <InlineNotice tone={status.tone === "ok" ? "success" : status.tone === "error" ? "error" : "info"}>
+            {status.tone === "busy" ? (
+              <span className="inline-flex items-center gap-2">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {status.text}
+              </span>
+            ) : (
+              status.text
+            )}
+          </InlineNotice>
+        </div>
+      )}
+    </SectionCard>
   );
 }

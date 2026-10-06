@@ -1,18 +1,17 @@
 "use client";
 
-import { ReactNode, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowRight,
-  BookOpenText,
-  CheckCircle2,
+  ArrowLeft,
   ChevronDown,
   ChevronUp,
-  FilePlus2,
-  Layers3,
-  ShieldCheck,
+  LibraryBig,
+  Pencil,
+  Plus,
+  Search,
   Sparkles,
-  Wand2,
 } from "lucide-react";
 
 import {
@@ -21,1116 +20,72 @@ import {
   draftPolicy,
   fetchPolicies,
   fetchPolicyLibrary,
-  Policy,
-  PolicyDraftResponse,
-  PolicyLibraryItem,
-  PolicyPhase,
-  PolicyScope,
+  updatePolicy,
+  type Policy,
+  type PolicyDraftResponse,
+  type PolicyLibraryItem,
+  type PolicyPhase,
+  type PolicyScope,
 } from "src/lib/api";
 import { useConsole } from "src/app/(console)/console-context";
 import {
-  buildGenericContextDraft,
-  DraftArgs,
-  PolicyDraft,
-  formatScope,
-  inferStarter,
-  parseExamples,
   PHASE_LABELS,
   PHASE_OPTIONS,
-  slugify,
   STARTERS,
+  formatScope,
+  parseExamples,
   summarizePolicy,
+  type PolicyDraft,
 } from "./policy-drafts";
+import {
+  PolicyForm,
+  RuleTable,
+  contextSummary,
+  defaultConfigFor,
+  targetLabel,
+  type PolicyFormValues,
+} from "./policy-form";
+import { PolicyLibrary } from "./policy-library";
+import {
+  BTN_OUTLINE,
+  BTN_PRIMARY,
+  BTN_SECONDARY,
+  ConfirmDialog,
+  CopyButton,
+  INPUT,
+  SELECT,
+  InlineNotice,
+  KeyValue,
+  PhaseTags,
+  SectionCard,
+  StatusTag,
+  TAG,
+  TAG_GREEN,
+  TAG_RED,
+  TypeTag,
+  typeLabel,
+  type NoticeTone,
+} from "./policy-ui";
 
-type PolicyTab = "create" | "templates" | "existing";
-type CreationStage = "compose" | "review" | "success";
+type Screen = "list" | "detail" | "edit" | "create" | "library";
+type TypeFilter = "ALL" | Policy["type"];
+type StatusFilter = "ALL" | "ENABLED" | "DISABLED";
 
-export default function PoliciesPage() {
-  const { envId, projectId } = useParams() as { envId: string; projectId: string };
-  const { tenantId } = useConsole();
-  const router = useRouter();
-
-  const [policies, setPolicies] = useState<Policy[]>([]);
-  const [policyLibrary, setPolicyLibrary] = useState<PolicyLibraryItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [libraryLoading, setLibraryLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [libraryError, setLibraryError] = useState<string | null>(null);
-  const [builderError, setBuilderError] = useState<string | null>(null);
-  const [builderNotice, setBuilderNotice] = useState<string | null>(null);
-  const [deployingTemplate, setDeployingTemplate] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [generating, setGenerating] = useState(false);
-
-  const [activeTab, setActiveTab] = useState<PolicyTab>("create");
-  const [creationStage, setCreationStage] = useState<CreationStage>("compose");
-  const [examplesOpen, setExamplesOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-
-  const [intent, setIntent] = useState("");
-  const [selectedStarterId, setSelectedStarterId] = useState<string | null>(null);
-  const [tailoring, setTailoring] = useState("");
-  const [blockedExamplesText, setBlockedExamplesText] = useState("");
-  const [allowedExamplesText, setAllowedExamplesText] = useState("");
-
-  const [reviewDraft, setReviewDraft] = useState<PolicyDraft | null>(null);
-  const [createdPolicy, setCreatedPolicy] = useState<Policy | null>(null);
-
-  const [nameOverride, setNameOverride] = useState("");
-  const [idOverride, setIdOverride] = useState("");
-  const [idManuallyEdited, setIdManuallyEdited] = useState(false);
-  const [scopeOverride, setScopeOverride] = useState<PolicyScope>("PROJECT");
-  const [enabledOverride, setEnabledOverride] = useState(true);
-  const [phaseOverride, setPhaseOverride] = useState<PolicyPhase[] | null>(null);
-
-  useEffect(() => {
-    if (!envId || !projectId || !tenantId) {
-      return;
-    }
-    setLoading(true);
-    setLibraryLoading(true);
-    Promise.allSettled([
-      fetchPolicies(tenantId, envId, projectId),
-      fetchPolicyLibrary(),
-    ])
-      .then(([policyResult, libraryResult]) => {
-        if (policyResult.status === "fulfilled") {
-          setPolicies(policyResult.value);
-          setError(null);
-        } else {
-          console.error(policyResult.reason);
-          setError("Unable to load policies for this project.");
-        }
-        if (libraryResult.status === "fulfilled") {
-          setPolicyLibrary(libraryResult.value);
-          setLibraryError(null);
-        } else {
-          console.error(libraryResult.reason);
-          setLibraryError("Unable to load the policy library.");
-        }
-      })
-      .finally(() => {
-        setLoading(false);
-        setLibraryLoading(false);
-      });
-  }, [envId, projectId, tenantId]);
-
-  const selectedStarter = useMemo(
-    () => STARTERS.find((starter) => starter.id === selectedStarterId) || null,
-    [selectedStarterId]
-  );
-
-  const blockedExamples = useMemo(() => parseExamples(blockedExamplesText), [blockedExamplesText]);
-  const allowedExamples = useMemo(() => parseExamples(allowedExamplesText), [allowedExamplesText]);
-
-  const composerDraft = useMemo(() => {
-    const args: DraftArgs = {
-      intent: intent.trim(),
-      tailoring: tailoring.trim(),
-      blockedExamples,
-      allowedExamples,
-    };
-    if (!args.intent && !selectedStarter && blockedExamples.length === 0 && allowedExamples.length === 0) {
-      return null;
-    }
-    const inferredStarter = selectedStarter || inferStarter(args);
-    if (inferredStarter) {
-      return inferredStarter.build(args);
-    }
-    return buildGenericContextDraft(args);
-  }, [allowedExamples, blockedExamples, intent, selectedStarter, tailoring]);
-
-  const draftForReview = reviewDraft;
-  const resolvedDraftName = nameOverride.trim() || draftForReview?.name || "";
-  const resolvedDraftId = idOverride.trim() || draftForReview?.policyId || "";
-  const resolvedDraftPhases = phaseOverride || draftForReview?.phases || ["PRE_LLM"];
-  const configPreviewText = draftForReview ? JSON.stringify(draftForReview.config, null, 2) : "";
-
-  const deployedPolicyIds = useMemo(
-    () => new Set(policies.map((policy) => policy.policy_id)),
-    [policies]
-  );
-
-  const resetComposer = () => {
-    setIntent("");
-    setSelectedStarterId(null);
-    setTailoring("");
-    setBlockedExamplesText("");
-    setAllowedExamplesText("");
-    setReviewDraft(null);
-    setCreatedPolicy(null);
-    setNameOverride("");
-    setIdOverride("");
-    setIdManuallyEdited(false);
-    setScopeOverride("PROJECT");
-    setEnabledOverride(true);
-    setPhaseOverride(null);
-    setExamplesOpen(false);
-    setAdvancedOpen(false);
-    setCreationStage("compose");
-    setBuilderError(null);
-  };
-
-  const returnToCompose = () => {
-    setCreationStage("compose");
-    setReviewDraft(null);
-    setCreatedPolicy(null);
-    setBuilderError(null);
-  };
-
-  const updateComposer = (fn: () => void) => {
-    fn();
-    if (creationStage !== "compose") {
-      returnToCompose();
-    }
-  };
-
-  const handleStarterSelect = (starterId: string) => {
-    const starter = STARTERS.find((item) => item.id === starterId);
-    if (!starter) {
-      return;
-    }
-    updateComposer(() => {
-      setSelectedStarterId((current) => (current === starterId ? null : starterId));
-      setBuilderNotice(null);
-      if (!intent.trim()) {
-        setIntent(starter.defaultIntent);
-      }
-    });
-  };
-
-  const applyDraft = (draft: PolicyDraft) => {
-    setReviewDraft(draft);
-    setNameOverride(draft.name);
-    setIdOverride(ensureUniquePolicyId(draft.policyId, deployedPolicyIds));
-    setIdManuallyEdited(false);
-    setScopeOverride(draft.scope);
-    setEnabledOverride(draft.enabled);
-    setPhaseOverride(draft.phases);
-    setAdvancedOpen(false);
-    setCreationStage("review");
-  };
-
-  const handleGenerateDraft = async () => {
-    setBuilderError(null);
-    setBuilderNotice(null);
-    if (!intent.trim() && blockedExamples.length === 0 && allowedExamples.length === 0) {
-      setBuilderError("Describe the rule or provide examples first.");
-      return;
-    }
-    if (!tenantId) {
-      setBuilderError("Tenant is not available.");
-      return;
-    }
-    setGenerating(true);
-    try {
-      const server = await draftPolicy({
-        tenant_id: tenantId,
-        environment_id: envId,
-        project_id: projectId,
-        intent: intent.trim(),
-        tailoring: tailoring.trim(),
-        blocked_examples: blockedExamples,
-        allowed_examples: allowedExamples,
-      });
-      applyDraft(mapServerDraft(server));
-    } catch (err) {
-      console.error(err);
-      if (composerDraft) {
-        applyDraft(composerDraft);
-        setBuilderNotice(
-          "AI taslağı üretilemedi; yerel taslak kullanıldı. Servis tarafında OPENAI_API_KEY ayarını kontrol edin."
-        );
-      } else {
-        setBuilderError(
-          err instanceof Error ? err.message : "Draft generation failed. Try again."
-        );
-      }
-    } finally {
-      setGenerating(false);
-    }
-  };
-
-  const handleTogglePhase = (phase: PolicyPhase) => {
-    const current = phaseOverride || draftForReview?.phases || ["PRE_LLM"];
-    const next = current.includes(phase)
-      ? current.filter((value) => value !== phase)
-      : [...current, phase];
-    setPhaseOverride(next);
-  };
-
-  const handleCreatePolicy = async () => {
-    setBuilderError(null);
-    setBuilderNotice(null);
-    if (!tenantId) {
-      setBuilderError("Tenant is not available.");
-      return;
-    }
-    if (!draftForReview) {
-      setBuilderError("Generate a draft before creating the policy.");
-      return;
-    }
-    if (!resolvedDraftName || !resolvedDraftId) {
-      setBuilderError("Policy name and ID cannot be empty.");
-      return;
-    }
-    if (deployedPolicyIds.has(resolvedDraftId)) {
-      setBuilderError(
-        "Policy ID already exists in this project. Change the name or edit the ID in Advanced settings."
-      );
-      return;
-    }
-    if (resolvedDraftPhases.length === 0) {
-      setBuilderError("Choose at least one phase.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const created = await createPolicy({
-        tenant_id: tenantId,
-        environment_id: envId,
-        project_id: projectId,
-        policy_id: resolvedDraftId,
-        name: resolvedDraftName,
-        type: draftForReview.type,
-        enabled: enabledOverride,
-        phases: resolvedDraftPhases,
-        config: draftForReview.config,
-        scope: scopeOverride,
-      });
-      setPolicies((current) => [created, ...current]);
-      setCreatedPolicy(created);
-      setCreationStage("success");
-      setBuilderNotice(`${created.name} created successfully.`);
-    } catch (err) {
-      console.error(err);
-      setBuilderError(
-        err instanceof Error ? err.message : "Policy creation failed. Check the draft and try again."
-      );
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleDeployPolicy = async (template: PolicyLibraryItem) => {
-    if (!envId || !projectId || !tenantId) {
-      return;
-    }
-    if (deployedPolicyIds.has(template.default_policy_id)) {
-      return;
-    }
-    setLibraryError(null);
-    setBuilderNotice(null);
-    setDeployingTemplate(template.template_id);
-    try {
-      const deployed = await deployPolicyTemplate({
-        tenant_id: tenantId,
-        environment_id: envId,
-        project_id: projectId,
-        template_id: template.template_id,
-      });
-      setPolicies((current) => [deployed, ...current]);
-      setBuilderNotice(`${template.name} deployed to this project.`);
-      setActiveTab("existing");
-    } catch (err) {
-      console.error(err);
-      setLibraryError("Policy deployment failed. Try again.");
-    } finally {
-      setDeployingTemplate(null);
-    }
-  };
-
-  return (
-    <div className="space-y-10 fade-up">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-            Policies
-          </p>
-          <h2 className="font-display text-4xl font-bold tracking-tight text-ink">
-            Create Policies
-          </h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate">
-            Pick one clear path: create a new policy, deploy a starter, or review what
-            is already active.
-          </p>
-        </div>
-        <div className="rounded-full bg-slate/10 px-4 py-2 text-xs font-semibold text-slate">
-          {policies.length} policies
-        </div>
-      </header>
-
-      <div className="flex flex-wrap gap-2">
-        <TabButton
-          active={activeTab === "create"}
-          icon={<FilePlus2 className="h-4 w-4" />}
-          label="Create"
-          onClick={() => setActiveTab("create")}
-        />
-        <TabButton
-          active={activeTab === "templates"}
-          icon={<Layers3 className="h-4 w-4" />}
-          label="Templates"
-          onClick={() => setActiveTab("templates")}
-        />
-        <TabButton
-          active={activeTab === "existing"}
-          icon={<ShieldCheck className="h-4 w-4" />}
-          label="Existing"
-          onClick={() => setActiveTab("existing")}
-        />
-      </div>
-
-      {error && (
-        <div className="rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
-          {error}
-        </div>
-      )}
-
-      {builderNotice && (
-        <div className="rounded-2xl border border-mint/40 bg-mint/20 px-4 py-3 text-xs text-ink">
-          {builderNotice}
-        </div>
-      )}
-
-      {activeTab === "create" && (
-        <div className="space-y-6">
-          <CreateFlowHeader stage={creationStage} />
-
-          {builderError && (
-            <div className="rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
-              {builderError}
-            </div>
-          )}
-
-          {creationStage === "compose" && (
-            <section className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm">
-              <div className="max-w-4xl space-y-6">
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                    Step 1
-                  </p>
-                  <h3 className="mt-2 font-display text-3xl font-bold text-ink">
-                    What should this policy protect against?
-                  </h3>
-                  <p className="mt-2 text-sm text-slate">
-                    Start with one sentence. If you have examples, add them below. UMAI
-                    will draft the policy for review.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-slate/10 bg-slate/5 p-5">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                    Describe it
-                  </label>
-                  <textarea
-                    className="mt-3 h-32 w-full rounded-2xl border border-slate/10 bg-white px-4 py-3 text-sm text-ink shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15"
-                    placeholder="Example: Block policy numbers, claim IDs, and customer reference numbers in both customer messages and AI responses."
-                    value={intent}
-                    onChange={(event) =>
-                      updateComposer(() => setIntent(event.target.value))
-                    }
-                  />
-                </div>
-
-                <div className="rounded-2xl border border-slate/10 bg-white p-5">
-                  <div className="flex items-center gap-2">
-                    <Wand2 className="h-4 w-4 text-ink" />
-                    <p className="text-sm font-semibold text-ink">Use a starter</p>
-                  </div>
-                  <p className="mt-2 text-xs text-slate">
-                    Choose a proven direction if your rule matches a common protection.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {STARTERS.map((starter) => {
-                      const active = starter.id === selectedStarterId;
-                      return (
-                        <button
-                          key={starter.id}
-                          type="button"
-                          className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
-                            active
-                              ? "bg-ink text-white"
-                              : "border border-slate/10 bg-white text-slate hover:bg-slate/5"
-                          }`}
-                          onClick={() => handleStarterSelect(starter.id)}
-                        >
-                          {starter.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="rounded-2xl border border-slate/10 bg-white p-5">
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between text-left"
-                    onClick={() => setExamplesOpen((current) => !current)}
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <BookOpenText className="h-4 w-4 text-ink" />
-                        <p className="text-sm font-semibold text-ink">Paste examples</p>
-                      </div>
-                      <p className="mt-2 text-xs text-slate">
-                        Best for customer-specific rules like claim IDs, internal codes,
-                        or product names.
-                      </p>
-                    </div>
-                    {examplesOpen ? (
-                      <ChevronUp className="h-4 w-4 text-slate" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 text-slate" />
-                    )}
-                  </button>
-
-                  {examplesOpen && (
-                    <div className="mt-5 grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                          Block these examples
-                        </label>
-                        <textarea
-                          className="h-36 w-full rounded-2xl border border-slate/10 bg-slate/5 px-4 py-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15"
-                          placeholder={"TR33 0006 1005 1978 6457 8413 26\nClaim ID: CLM-2026-000314\nPolicy number: POL-77812"}
-                          value={blockedExamplesText}
-                          onChange={(event) =>
-                            updateComposer(() => setBlockedExamplesText(event.target.value))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                          Allow these examples
-                        </label>
-                        <textarea
-                          className="h-36 w-full rounded-2xl border border-slate/10 bg-slate/5 px-4 py-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15"
-                          placeholder={"Show me the status of my claim\nExplain what home insurance covers\nHow do I update my address?"}
-                          value={allowedExamplesText}
-                          onChange={(event) =>
-                            updateComposer(() => setAllowedExamplesText(event.target.value))
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2 md:col-span-2">
-                        <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                          Tailor it for your business
-                        </label>
-                        <textarea
-                          className="h-24 w-full rounded-2xl border border-slate/10 bg-slate/5 px-4 py-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15"
-                          placeholder="Example: For XYZ Sigorta, policy IDs start with POL- and claim IDs start with CLM-. We prefer to redact instead of flagging."
-                          value={tailoring}
-                          onChange={(event) =>
-                            updateComposer(() => setTailoring(event.target.value))
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0b1322] disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={generating}
-                    onClick={handleGenerateDraft}
-                  >
-                    {generating ? "Drafting with AI..." : "Generate draft"}
-                    {!generating && <ArrowRight className="h-4 w-4" />}
-                  </button>
-                  <p className="text-xs text-slate">
-                    UMAI drafts a deep safeguard-format policy from your description.
-                    Nothing is created until you confirm it.
-                  </p>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {creationStage === "review" && draftForReview && (
-            <section className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm">
-              <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
-                <div className="space-y-6">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                      Step 2
-                    </p>
-                    <h3 className="mt-2 font-display text-3xl font-bold text-ink">
-                      Review the draft
-                    </h3>
-                    <p className="mt-2 text-sm text-slate">
-                      Confirm the policy summary, check the example decisions, then
-                      create the policy.
-                    </p>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate/10 bg-slate/5 p-5">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <p className="text-xl font-semibold text-ink">{draftForReview.name}</p>
-                        <p className="mt-2 text-sm text-slate">{draftForReview.summary}</p>
-                      </div>
-                      <span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-slate shadow-sm">
-                        {draftForReview.sourceLabel}
-                      </span>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
-                      <span className="rounded-full bg-white px-3 py-1 shadow-sm">
-                        {draftForReview.type === "HEURISTIC"
-                          ? "Fast pattern check"
-                          : "AI-assisted review"}
-                      </span>
-                      {resolvedDraftPhases.map((phase) => (
-                        <span key={phase} className="rounded-full bg-white px-3 py-1 shadow-sm">
-                          {PHASE_LABELS[phase]}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate/10 bg-white p-5">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                      Why UMAI drafted it this way
-                    </p>
-                    <div className="mt-4 space-y-3">
-                      {draftForReview.rationale.map((item) => (
-                        <div
-                          key={item}
-                          className="rounded-2xl border border-slate/10 bg-slate/5 px-4 py-3 text-sm text-slate"
-                        >
-                          {item}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate/10 bg-white p-5">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-ink" />
-                      <p className="text-sm font-semibold text-ink">Example decisions</p>
-                    </div>
-                    <div className="mt-4 space-y-3">
-                      {draftForReview.previewExamples.map((example) => (
-                        <div
-                          key={`${example.decision}-${example.text}`}
-                          className="flex items-start justify-between gap-4 rounded-2xl border border-slate/10 bg-slate/5 px-4 py-3"
-                        >
-                          <p className="text-sm text-ink">{example.text}</p>
-                          <span
-                            className={`rounded-full px-3 py-1 text-[10px] font-bold ${
-                              example.decision === "BLOCK"
-                                ? "bg-danger/15 text-danger"
-                                : "bg-mint/30 text-ink"
-                            }`}
-                          >
-                            {example.decision}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-5 rounded-2xl border border-slate/10 bg-slate/5 p-5">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                      Create settings
-                    </p>
-                    <p className="mt-2 text-sm text-slate">
-                      Edit only the essentials. Everything else stays tucked into
-                      advanced settings.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                      Policy name
-                    </label>
-                    <input
-                      className="w-full rounded-2xl border border-slate/10 bg-white px-4 py-3 text-sm text-ink shadow-sm focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15"
-                      value={nameOverride}
-                      onChange={(event) => {
-                        const nextName = event.target.value;
-                        setNameOverride(nextName);
-                        if (!idManuallyEdited) {
-                          setIdOverride(
-                            ensureUniquePolicyId(
-                              `pol-${slugify(nextName) || "custom-policy"}`,
-                              deployedPolicyIds
-                            )
-                          );
-                        }
-                      }}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                      Where should it run?
-                    </label>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      {(["PROJECT", "ENVIRONMENT", "ORGANIZATION"] as PolicyScope[]).map(
-                        (scope) => (
-                          <button
-                            key={scope}
-                            type="button"
-                            className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                              scopeOverride === scope
-                                ? "border-ink bg-ink text-white"
-                                : "border-slate/10 bg-white text-slate hover:bg-slate/5"
-                            }`}
-                            onClick={() => setScopeOverride(scope)}
-                          >
-                            {formatScope(scope)}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                      When should it run?
-                    </label>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {PHASE_OPTIONS.map((phase) => (
-                        <button
-                          key={phase}
-                          type="button"
-                          className={`rounded-2xl border px-4 py-3 text-sm font-semibold transition ${
-                            resolvedDraftPhases.includes(phase)
-                              ? "border-ink bg-ink text-white"
-                              : "border-slate/10 bg-white text-slate hover:bg-slate/5"
-                          }`}
-                          onClick={() => handleTogglePhase(phase)}
-                        >
-                          {PHASE_LABELS[phase]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate/10 bg-white px-4 py-3">
-                    <label className="flex items-center justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-semibold text-ink">Create enabled</p>
-                        <p className="mt-1 text-xs text-slate">
-                          Turn it on immediately after creation.
-                        </p>
-                      </div>
-                      <input
-                        checked={enabledOverride}
-                        className="h-4 w-4 rounded border-slate/20 text-ink focus:ring-accent"
-                        onChange={(event) => setEnabledOverride(event.target.checked)}
-                        type="checkbox"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate/10 bg-white">
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between px-4 py-3 text-left"
-                      onClick={() => setAdvancedOpen((current) => !current)}
-                    >
-                      <div>
-                        <p className="text-sm font-semibold text-ink">Advanced settings</p>
-                        <p className="mt-1 text-xs text-slate">
-                          Policy ID and generated config preview.
-                        </p>
-                      </div>
-                      {advancedOpen ? (
-                        <ChevronUp className="h-4 w-4 text-slate" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4 text-slate" />
-                      )}
-                    </button>
-
-                    {advancedOpen && (
-                      <div className="space-y-4 border-t border-slate/10 px-4 py-4">
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                            Policy ID
-                          </label>
-                          <input
-                            className="w-full rounded-2xl border border-slate/10 bg-slate/5 px-4 py-3 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/15"
-                            value={idOverride}
-                            onChange={(event) => {
-                              setIdManuallyEdited(true);
-                              setIdOverride(event.target.value);
-                            }}
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                            Generated config
-                          </p>
-                          <pre className="max-h-80 overflow-auto rounded-2xl border border-slate/10 bg-slate/5 p-4 text-xs leading-6 text-slate">
-                            {configPreviewText}
-                          </pre>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-3 pt-2">
-                    <button
-                      type="button"
-                      className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0b1322] disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={saving}
-                      onClick={handleCreatePolicy}
-                    >
-                      {saving ? "Creating policy..." : "Create policy"}
-                      {!saving && <ArrowRight className="h-4 w-4" />}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-2xl border border-slate/10 bg-white px-5 py-3 text-sm font-semibold text-slate transition hover:bg-slate/5"
-                      onClick={returnToCompose}
-                    >
-                      Back to draft inputs
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {creationStage === "success" && createdPolicy && (
-            <section className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm">
-              <div className="mx-auto flex max-w-3xl flex-col items-center text-center">
-                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-mint/30 text-ink">
-                  <CheckCircle2 className="h-8 w-8" />
-                </div>
-                <p className="mt-6 text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-                  Step 3
-                </p>
-                <h3 className="mt-2 font-display text-3xl font-bold text-ink">
-                  Policy created
-                </h3>
-                <p className="mt-3 text-sm text-slate">
-                  <span className="font-semibold text-ink">{createdPolicy.name}</span> is now
-                  available in this project. The next best step is to attach it to a
-                  guardrail.
-                </p>
-                <div className="mt-6 flex flex-wrap items-center justify-center gap-2 text-[10px] font-semibold text-slate">
-                  <span className="rounded-full bg-slate/10 px-3 py-1">
-                    {createdPolicy.type === "HEURISTIC"
-                      ? "Fast pattern check"
-                      : "AI-assisted review"}
-                  </span>
-                  <span className="rounded-full bg-slate/10 px-3 py-1">
-                    {formatScope(createdPolicy.scope)}
-                  </span>
-                  {createdPolicy.phases.map((phase) => (
-                    <span key={phase} className="rounded-full bg-slate/10 px-3 py-1">
-                      {PHASE_LABELS[phase]}
-                    </span>
-                  ))}
-                </div>
-
-                <div className="mt-8 grid w-full gap-3 sm:grid-cols-3">
-                  <button
-                    type="button"
-                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0b1322]"
-                    onClick={() =>
-                      router.push(
-                        `/environments/${envId}/projects/${projectId}/guardrails`
-                      )
-                    }
-                  >
-                    Attach to guardrail
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-2xl border border-slate/10 bg-white px-5 py-3 text-sm font-semibold text-slate transition hover:bg-slate/5"
-                    onClick={() => {
-                      resetComposer();
-                      setActiveTab("create");
-                    }}
-                  >
-                    Create another
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-2xl border border-slate/10 bg-white px-5 py-3 text-sm font-semibold text-slate transition hover:bg-slate/5"
-                    onClick={() => setActiveTab("existing")}
-                  >
-                    View existing
-                  </button>
-                </div>
-              </div>
-            </section>
-          )}
-        </div>
-      )}
-
-      {activeTab === "templates" && (
-        <PolicyTemplateSection
-          deployedPolicyIds={deployedPolicyIds}
-          deployingTemplate={deployingTemplate}
-          libraryError={libraryError}
-          libraryLoading={libraryLoading}
-          policyLibrary={policyLibrary}
-          onDeploy={handleDeployPolicy}
-        />
-      )}
-
-      {activeTab === "existing" && (
-        <ExistingPoliciesSection loading={loading} policies={policies} />
-      )}
-    </div>
-  );
+interface Notice {
+  tone: NoticeTone;
+  text: string;
+  link?: { label: string; href: string };
 }
 
-function TabButton(props: {
-  active: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  const { active, icon, label, onClick } = props;
-  return (
-    <button
-      type="button"
-      className={`inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition ${
-        active
-          ? "bg-ink text-white shadow-sm"
-          : "border border-slate/10 bg-white text-slate hover:bg-slate/5"
-      }`}
-      onClick={onClick}
-    >
-      {icon}
-      {label}
-    </button>
-  );
-}
-
-function CreateFlowHeader({ stage }: { stage: CreationStage }) {
-  const steps: Array<{ id: CreationStage; label: string; detail: string }> = [
-    { id: "compose", label: "Describe", detail: "Share the rule in plain language." },
-    { id: "review", label: "Review", detail: "Check the draft and examples." },
-    { id: "success", label: "Create", detail: "Save the policy and attach it." },
-  ];
-  const activeIndex = steps.findIndex((step) => step.id === stage);
-
-  return (
-    <div className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm">
-      <div className="grid gap-4 md:grid-cols-3">
-        {steps.map((step, index) => {
-          const isComplete = index < activeIndex;
-          const isActive = index === activeIndex;
-          return (
-            <div
-              key={step.id}
-              className={`rounded-2xl border px-4 py-4 transition ${
-                isActive
-                  ? "border-ink bg-ink text-white"
-                  : isComplete
-                    ? "border-mint/30 bg-mint/15 text-ink"
-                    : "border-slate/10 bg-slate/5 text-slate"
-              }`}
-            >
-              <p className="text-[10px] font-bold uppercase tracking-[0.3em] opacity-70">
-                Step {index + 1}
-              </p>
-              <p className="mt-2 text-base font-semibold">{step.label}</p>
-              <p className="mt-1 text-sm opacity-80">{step.detail}</p>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function PolicyTemplateSection(props: {
-  deployedPolicyIds: Set<string>;
-  deployingTemplate: string | null;
-  libraryError: string | null;
-  libraryLoading: boolean;
-  policyLibrary: PolicyLibraryItem[];
-  onDeploy: (template: PolicyLibraryItem) => void;
-}) {
-  const {
-    deployedPolicyIds,
-    deployingTemplate,
-    libraryError,
-    libraryLoading,
-    policyLibrary,
-    onDeploy,
-  } = props;
-
-  return (
-    <section className="space-y-5">
-      <div className="max-w-3xl">
-        <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-          Templates
-        </p>
-        <h3 className="mt-2 font-display text-3xl font-bold text-ink">
-          Start from a proven protection
-        </h3>
-        <p className="mt-2 text-sm text-slate">
-          Choose a ready-made policy when the rule already matches a common pattern.
-        </p>
-      </div>
-
-      {libraryError && (
-        <div className="rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
-          {libraryError}
-        </div>
-      )}
-
-      {libraryLoading ? (
-        <div className="rounded-3xl border border-slate/10 bg-white p-8 text-sm text-slate shadow-sm">
-          Loading templates...
-        </div>
-      ) : policyLibrary.length === 0 ? (
-        <div className="rounded-3xl border border-slate/10 bg-white p-8 text-sm text-slate shadow-sm">
-          No policy templates are available yet.
-        </div>
-      ) : (
-        <div className="grid gap-5 xl:grid-cols-2">
-          {policyLibrary.map((template) => {
-            const deployed = deployedPolicyIds.has(template.default_policy_id);
-            return (
-              <article
-                key={template.template_id}
-                className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xl font-semibold text-ink">{template.name}</p>
-                    <p className="mt-2 text-sm text-slate">
-                      {template.description || "Ready-made protection from the UMAI library."}
-                    </p>
-                  </div>
-                  <span className="rounded-full bg-slate/10 px-3 py-1 text-[10px] font-bold text-slate">
-                    {template.type === "HEURISTIC"
-                      ? "Fast pattern check"
-                      : "AI-assisted review"}
-                  </span>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
-                  {template.phases.map((phase) => (
-                    <span key={phase} className="rounded-full bg-slate/10 px-3 py-1">
-                      {PHASE_LABELS[phase]}
-                    </span>
-                  ))}
-                  {template.managed && (
-                    <span className="rounded-full bg-slate/10 px-3 py-1">Managed</span>
-                  )}
-                  {(template.tags || []).map((tag) => (
-                    <span key={tag} className="rounded-full bg-slate/10 px-3 py-1">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-
-                <button
-                  type="button"
-                  className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#0b1322] disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={deployed || deployingTemplate === template.template_id}
-                  onClick={() => onDeploy(template)}
-                >
-                  {deployed
-                    ? "Already deployed"
-                    : deployingTemplate === template.template_id
-                      ? "Deploying..."
-                      : "Deploy template"}
-                </button>
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ExistingPoliciesSection(props: { loading: boolean; policies: Policy[] }) {
-  const { loading, policies } = props;
-
-  return (
-    <section className="space-y-5">
-      <div className="max-w-3xl">
-        <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-slate/60">
-          Existing
-        </p>
-        <h3 className="mt-2 font-display text-3xl font-bold text-ink">
-          Policies already active in this project
-        </h3>
-        <p className="mt-2 text-sm text-slate">
-          Review what is live before creating or deploying another policy.
-        </p>
-      </div>
-
-      {loading ? (
-        <div className="rounded-3xl border border-slate/10 bg-white p-8 text-sm text-slate shadow-sm">
-          Loading policies...
-        </div>
-      ) : policies.length === 0 ? (
-        <div className="rounded-3xl border border-slate/10 bg-white p-8 shadow-sm">
-          <p className="text-lg font-semibold text-ink">No policies yet</p>
-          <p className="mt-2 text-sm text-slate">
-            Create a policy from the Create tab or deploy one from Templates.
-          </p>
-        </div>
-      ) : (
-        <div className="grid gap-4">
-          {policies.map((policy) => (
-            <article
-              key={policy.policy_id}
-              className="rounded-3xl border border-slate/10 bg-white p-6 shadow-sm"
-            >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-lg font-semibold text-ink">{policy.name}</p>
-                    <span
-                      className={`rounded-full px-3 py-1 text-[10px] font-bold ${
-                        policy.enabled
-                          ? "bg-mint/30 text-ink"
-                          : "bg-slate/10 text-slate"
-                      }`}
-                    >
-                      {policy.enabled ? "Enabled" : "Disabled"}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm text-slate">{summarizePolicy(policy)}</p>
-                  <p className="mt-3 text-[11px] font-semibold uppercase tracking-[0.25em] text-slate/50">
-                    {policy.policy_id}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap gap-2 text-[10px] font-semibold text-slate">
-                  <span className="rounded-full bg-slate/10 px-3 py-1">
-                    {policy.type === "HEURISTIC"
-                      ? "Fast pattern check"
-                      : "AI-assisted review"}
-                  </span>
-                  <span className="rounded-full bg-slate/10 px-3 py-1">
-                    {formatScope(policy.scope)}
-                  </span>
-                  {policy.phases.map((phase) => (
-                    <span key={phase} className="rounded-full bg-slate/10 px-3 py-1">
-                      {PHASE_LABELS[phase]}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
+const blankForm = (type: Policy["type"]): PolicyFormValues => ({
+  name: "",
+  policyId: "",
+  type,
+  scope: "PROJECT",
+  enabled: true,
+  phases: ["PRE_LLM"],
+  config: defaultConfigFor(type),
+});
 
 function mapServerDraft(r: PolicyDraftResponse): PolicyDraft {
   return {
@@ -1144,18 +99,13 @@ function mapServerDraft(r: PolicyDraftResponse): PolicyDraft {
     sourceLabel: r.source_label,
     rationale: r.rationale,
     config: r.config as Record<string, unknown>,
-    previewExamples: r.preview_examples.map((p) => ({
-      text: p.text,
-      decision: p.decision,
-    })),
+    previewExamples: r.preview_examples.map((p) => ({ text: p.text, decision: p.decision })),
   };
 }
 
 function ensureUniquePolicyId(baseId: string, existingIds: Set<string>): string {
   const normalizedBase = baseId.trim() || "pol-custom-policy";
-  if (!existingIds.has(normalizedBase)) {
-    return normalizedBase;
-  }
+  if (!existingIds.has(normalizedBase)) return normalizedBase;
   let suffix = 2;
   let candidate = `${normalizedBase}-${suffix}`;
   while (existingIds.has(candidate)) {
@@ -1163,4 +113,947 @@ function ensureUniquePolicyId(baseId: string, existingIds: Set<string>): string 
     candidate = `${normalizedBase}-${suffix}`;
   }
   return candidate;
+}
+
+function Toggle({ checked, label, onChange }: { checked: boolean; label: string; onChange: () => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      title={checked ? "Enabled — click to disable" : "Disabled — click to enable"}
+      onClick={(event) => {
+        event.stopPropagation();
+        onChange();
+      }}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition ${
+        checked ? "border-secondary bg-secondary" : "border-gray-300 bg-gray-200"
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 rounded-full bg-white transition ${
+          checked ? "translate-x-4" : "translate-x-0.5"
+        }`}
+      />
+    </button>
+  );
+}
+
+export default function PoliciesPage() {
+  const { envId, projectId } = useParams() as { envId: string; projectId: string };
+  const { tenantId } = useConsole();
+
+  const [policies, setPolicies] = useState<Policy[]>([]);
+  const [library, setLibrary] = useState<PolicyLibraryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [libraryLoading, setLibraryLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+
+  const [screen, setScreen] = useState<Screen>("list");
+  // Ekran değişince kaydırma konumu listeden kalmasın.
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    rootRef.current?.scrollIntoView({ block: "start" });
+  }, [screen]);
+  const [selectedPolicyId, setSelectedPolicyId] = useState<string | null>(null);
+  const [detailTab, setDetailTab] = useState<"overview" | "json">("overview");
+
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
+  const [phaseFilter, setPhaseFilter] = useState<PolicyPhase | "ALL">("ALL");
+  const [scopeFilter, setScopeFilter] = useState<PolicyScope | "ALL">("ALL");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+
+  const [pendingToggle, setPendingToggle] = useState<Policy | null>(null);
+  const [toggling, setToggling] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [deployingTemplate, setDeployingTemplate] = useState<string | null>(null);
+
+  // AI draft panel (create screen)
+  const [intent, setIntent] = useState("");
+  const [starterId, setStarterId] = useState<string | null>(null);
+  const [tailoring, setTailoring] = useState("");
+  const [blockedExamplesText, setBlockedExamplesText] = useState("");
+  const [allowedExamplesText, setAllowedExamplesText] = useState("");
+  const [examplesOpen, setExamplesOpen] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [draft, setDraft] = useState<PolicyDraft | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [formInitial, setFormInitial] = useState<PolicyFormValues>(() => blankForm("HEURISTIC"));
+  const [formKey, setFormKey] = useState(0);
+
+  const load = useCallback(() => {
+    if (!envId || !projectId || !tenantId) return;
+    setLoading(true);
+    setLibraryLoading(true);
+    Promise.allSettled([fetchPolicies(tenantId, envId, projectId), fetchPolicyLibrary()])
+      .then(([policyResult, libraryResult]) => {
+        if (policyResult.status === "fulfilled") {
+          setPolicies(policyResult.value);
+          setError(null);
+        } else {
+          console.error(policyResult.reason);
+          setError("Unable to load policies for this project.");
+        }
+        if (libraryResult.status === "fulfilled") {
+          setLibrary(libraryResult.value);
+          setLibraryError(null);
+        } else {
+          console.error(libraryResult.reason);
+          setLibraryError("Unable to load the policy library.");
+        }
+      })
+      .finally(() => {
+        setLoading(false);
+        setLibraryLoading(false);
+      });
+  }, [envId, projectId, tenantId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const existingIds = useMemo(() => new Set(policies.map((policy) => policy.policy_id)), [policies]);
+  const selected = useMemo(
+    () => policies.find((policy) => policy.policy_id === selectedPolicyId) ?? null,
+    [policies, selectedPolicyId]
+  );
+
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return policies
+      .filter((policy) => {
+        if (typeFilter !== "ALL" && policy.type !== typeFilter) return false;
+        if (phaseFilter !== "ALL" && !policy.phases.includes(phaseFilter)) return false;
+        if (scopeFilter !== "ALL" && (policy.scope ?? "PROJECT") !== scopeFilter) return false;
+        if (statusFilter === "ENABLED" && !policy.enabled) return false;
+        if (statusFilter === "DISABLED" && policy.enabled) return false;
+        if (!query) return true;
+        return `${policy.name} ${policy.policy_id}`.toLowerCase().includes(query);
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [phaseFilter, policies, scopeFilter, search, statusFilter, typeFilter]);
+
+  const guardrailsHref = `/environments/${envId}/projects/${projectId}/guardrails`;
+
+  // ---------------------------------------------------------------- navigation
+  const goList = () => {
+    setScreen("list");
+    setSaveError(null);
+  };
+  const openDetail = (policyId: string) => {
+    setSelectedPolicyId(policyId);
+    setDetailTab("overview");
+    setScreen("detail");
+    setSaveError(null);
+  };
+  const openEdit = (policyId: string) => {
+    setSelectedPolicyId(policyId);
+    setSaveError(null);
+    setScreen("edit");
+  };
+  const openCreate = () => {
+    setIntent("");
+    setStarterId(null);
+    setTailoring("");
+    setBlockedExamplesText("");
+    setAllowedExamplesText("");
+    setExamplesOpen(false);
+    setDraft(null);
+    setDraftError(null);
+    setSaveError(null);
+    setFormInitial(blankForm("HEURISTIC"));
+    setFormKey((key) => key + 1);
+    setNotice(null);
+    setScreen("create");
+  };
+  const openLibrary = () => {
+    setNotice(null);
+    setScreen("library");
+  };
+
+  // ---------------------------------------------------------------- AI draft
+  const handleGenerateDraft = async () => {
+    setDraftError(null);
+    const blocked = parseExamples(blockedExamplesText);
+    const allowed = parseExamples(allowedExamplesText);
+    if (!intent.trim() && blocked.length === 0 && allowed.length === 0) {
+      setDraftError("Describe the rule or paste examples first.");
+      return;
+    }
+    if (!tenantId) {
+      setDraftError("Tenant is not available.");
+      return;
+    }
+    setGenerating(true);
+    try {
+      const server = await draftPolicy({
+        tenant_id: tenantId,
+        environment_id: envId,
+        project_id: projectId,
+        intent: intent.trim(),
+        tailoring: tailoring.trim(),
+        blocked_examples: blocked,
+        allowed_examples: allowed,
+      });
+      const mapped = mapServerDraft(server);
+      setDraft(mapped);
+      setFormInitial({
+        name: mapped.name,
+        policyId: ensureUniquePolicyId(mapped.policyId, existingIds),
+        type: mapped.type,
+        scope: mapped.scope,
+        enabled: mapped.enabled,
+        phases: mapped.phases,
+        config: mapped.config,
+      });
+      setFormKey((key) => key + 1);
+    } catch (err) {
+      console.error(err);
+      setDraftError(err instanceof Error ? err.message : "Draft generation failed. Try again.");
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // ---------------------------------------------------------------- persistence
+  const handleCreate = async (values: PolicyFormValues) => {
+    if (!tenantId) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const created = await createPolicy({
+        tenant_id: tenantId,
+        environment_id: envId,
+        project_id: projectId,
+        policy_id: values.policyId,
+        name: values.name,
+        type: values.type,
+        enabled: values.enabled,
+        phases: values.phases,
+        config: values.config,
+        scope: values.scope,
+      });
+      setPolicies((current) => [created, ...current.filter((p) => p.policy_id !== created.policy_id)]);
+      setNotice({
+        tone: "success",
+        text: `${created.name} was created. It takes effect once attached to a guardrail version.`,
+        link: { label: "Go to guardrails", href: guardrailsHref },
+      });
+      openDetail(created.policy_id);
+    } catch (err) {
+      console.error(err);
+      setSaveError(err instanceof Error ? err.message : "Policy creation failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEdit = async (values: PolicyFormValues) => {
+    if (!tenantId || !selected) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const updated = await updatePolicy(tenantId, envId, projectId, selected.policy_id, {
+        name: values.name,
+        enabled: values.enabled,
+        phases: values.phases,
+        config: values.config,
+      });
+      setPolicies((current) => current.map((p) => (p.policy_id === updated.policy_id ? updated : p)));
+      setNotice({
+        tone: "success",
+        text: `${updated.name} was saved. Guardrails pick up the change in their next published version.`,
+        link: { label: "Go to guardrails", href: guardrailsHref },
+      });
+      openDetail(updated.policy_id);
+    } catch (err) {
+      console.error(err);
+      setSaveError(err instanceof Error ? err.message : "Saving the policy failed.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmToggle = async () => {
+    if (!tenantId || !pendingToggle) return;
+    setToggling(true);
+    try {
+      const updated = await updatePolicy(tenantId, envId, projectId, pendingToggle.policy_id, {
+        enabled: !pendingToggle.enabled,
+      });
+      setPolicies((current) => current.map((p) => (p.policy_id === updated.policy_id ? updated : p)));
+      setNotice({
+        tone: "info",
+        text: `${updated.name} is now ${updated.enabled ? "enabled" : "disabled"}. Guardrails apply the change in their next published version.`,
+      });
+      setPendingToggle(null);
+    } catch (err) {
+      console.error(err);
+      setNotice({ tone: "error", text: "Updating the policy status failed." });
+      setPendingToggle(null);
+    } finally {
+      setToggling(false);
+    }
+  };
+
+  const handleDeploy = async (template: PolicyLibraryItem) => {
+    if (!tenantId || existingIds.has(template.default_policy_id)) return;
+    setDeployingTemplate(template.template_id);
+    setLibraryError(null);
+    try {
+      const deployed = await deployPolicyTemplate({
+        tenant_id: tenantId,
+        environment_id: envId,
+        project_id: projectId,
+        template_id: template.template_id,
+      });
+      setPolicies((current) => [deployed, ...current]);
+      setNotice({
+        tone: "success",
+        text: `${template.name} was deployed to this project.`,
+        link: { label: "Go to guardrails", href: guardrailsHref },
+      });
+    } catch (err) {
+      console.error(err);
+      setLibraryError("Deploying the template failed. Try again.");
+    } finally {
+      setDeployingTemplate(null);
+    }
+  };
+
+  // ---------------------------------------------------------------- header
+  const backLink = (label: string, onClick: () => void) => (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mb-2 inline-flex items-center gap-1 text-sm font-medium text-secondary hover:underline"
+    >
+      <ArrowLeft className="h-4 w-4" /> {label}
+    </button>
+  );
+
+  const header = (() => {
+    if (screen === "library") {
+      return (
+        <div>
+          {backLink("Policies", goList)}
+          <h1 className="text-2xl font-semibold text-gray-900">Policy Library</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            UMAI-maintained templates you can deploy into <span className="font-mono text-xs">{projectId}</span>.
+          </p>
+        </div>
+      );
+    }
+    if (screen === "create") {
+      return (
+        <div>
+          {backLink("Policies", goList)}
+          <h1 className="text-2xl font-semibold text-gray-900">Create policy</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Describe the rule and let UMAI draft it, or fill in the form directly.
+          </p>
+        </div>
+      );
+    }
+    if ((screen === "detail" || screen === "edit") && selected) {
+      return (
+        <div>
+          {screen === "edit"
+            ? backLink(selected.name, () => openDetail(selected.policy_id))
+            : backLink("Policies", goList)}
+          <h1 className="text-2xl font-semibold text-gray-900">
+            {screen === "edit" ? `Edit · ${selected.name}` : selected.name}
+          </h1>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-500">
+            <span className="inline-flex items-center gap-1 font-mono text-xs">
+              {selected.policy_id}
+              <CopyButton value={selected.policy_id} label="Copy policy ID" />
+            </span>
+            <TypeTag type={selected.type} />
+            <span className={TAG}>{formatScope(selected.scope)}</span>
+            <StatusTag enabled={selected.enabled} />
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">Policies</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          {loading ? "Loading…" : `${policies.length} ${policies.length === 1 ? "policy" : "policies"}`}
+          {" · "}
+          {projectId}
+        </p>
+      </div>
+    );
+  })();
+
+  const headerActions = (() => {
+    if (screen === "list") {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={BTN_OUTLINE} onClick={openLibrary}>
+            <LibraryBig className="h-4 w-4" /> Policy Library
+          </button>
+          <button type="button" className={BTN_PRIMARY} onClick={openCreate}>
+            <Plus className="h-4 w-4" /> Create policy
+          </button>
+        </div>
+      );
+    }
+    if (screen === "detail" && selected) {
+      return (
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={BTN_SECONDARY} onClick={() => setPendingToggle(selected)}>
+            {selected.enabled ? "Disable" : "Enable"}
+          </button>
+          <button type="button" className={BTN_PRIMARY} onClick={() => openEdit(selected.policy_id)}>
+            <Pencil className="h-4 w-4" /> Edit policy
+          </button>
+        </div>
+      );
+    }
+    return null;
+  })();
+
+  return (
+    <div ref={rootRef} className="space-y-6">
+      <header className="flex flex-col gap-4 border-b border-gray-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
+        {header}
+        {headerActions}
+      </header>
+
+      {error && <InlineNotice tone="error">{error}</InlineNotice>}
+      {notice && (
+        <InlineNotice tone={notice.tone} onDismiss={() => setNotice(null)}>
+          {notice.text}
+          {notice.link && (
+            <>
+              {" "}
+              <Link href={notice.link.href} className="font-medium text-secondary hover:underline">
+                {notice.link.label} →
+              </Link>
+            </>
+          )}
+        </InlineNotice>
+      )}
+
+      {/* ------------------------------------------------------------ list */}
+      {screen === "list" && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[260px] flex-1">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <input
+                className={`${INPUT} pl-8`}
+                placeholder="Search by name or ID"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                aria-label="Search policies"
+              />
+            </div>
+            <select
+              className={SELECT}
+              value={typeFilter}
+              onChange={(event) => setTypeFilter(event.target.value as TypeFilter)}
+              aria-label="Filter by type"
+            >
+              <option value="ALL">All types</option>
+              <option value="HEURISTIC">{typeLabel("HEURISTIC")}</option>
+              <option value="CONTEXT_AWARE">{typeLabel("CONTEXT_AWARE")}</option>
+            </select>
+            <select
+              className={SELECT}
+              value={phaseFilter}
+              onChange={(event) => setPhaseFilter(event.target.value as PolicyPhase | "ALL")}
+              aria-label="Filter by phase"
+            >
+              <option value="ALL">All phases</option>
+              {PHASE_OPTIONS.map((phase) => (
+                <option key={phase} value={phase}>
+                  {PHASE_LABELS[phase]}
+                </option>
+              ))}
+            </select>
+            <select
+              className={SELECT}
+              value={scopeFilter}
+              onChange={(event) => setScopeFilter(event.target.value as PolicyScope | "ALL")}
+              aria-label="Filter by scope"
+            >
+              <option value="ALL">All scopes</option>
+              {(["PROJECT", "ENVIRONMENT", "ORGANIZATION"] as PolicyScope[]).map((scope) => (
+                <option key={scope} value={scope}>
+                  {formatScope(scope)}
+                </option>
+              ))}
+            </select>
+            <select
+              className={SELECT}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+              aria-label="Filter by status"
+            >
+              <option value="ALL">All statuses</option>
+              <option value="ENABLED">Enabled</option>
+              <option value="DISABLED">Disabled</option>
+            </select>
+          </div>
+
+          <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500">
+                <tr>
+                  <th className="px-4 py-2.5 font-medium">Name</th>
+                  <th className="px-4 py-2.5 font-medium">Type</th>
+                  <th className="px-4 py-2.5 font-medium">Phases</th>
+                  <th className="px-4 py-2.5 font-medium">Scope</th>
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="w-20 px-4 py-2.5 text-right font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {loading ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                      Loading policies…
+                    </td>
+                  </tr>
+                ) : policies.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
+                      No policies in this project yet. Create one or deploy a template from the library.
+                    </td>
+                  </tr>
+                ) : filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-10 text-center text-gray-500">
+                      No policies match these filters.
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((policy) => (
+                    <tr
+                      key={policy.policy_id}
+                      onClick={() => openDetail(policy.policy_id)}
+                      className="cursor-pointer transition-colors hover:bg-gray-50"
+                    >
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-gray-900">{policy.name}</p>
+                        <p className="mt-0.5 flex items-center gap-1.5 font-mono text-xs text-gray-500">
+                          {policy.policy_id}
+                          <CopyButton value={policy.policy_id} label="Copy policy ID" />
+                        </p>
+                      </td>
+                      <td className="px-4 py-3">
+                        <TypeTag type={policy.type} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <PhaseTags phases={policy.phases} max={3} />
+                      </td>
+                      <td className="px-4 py-3 text-gray-700">{formatScope(policy.scope)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <Toggle
+                            checked={policy.enabled}
+                            label={`${policy.enabled ? "Disable" : "Enable"} ${policy.name}`}
+                            onChange={() => setPendingToggle(policy)}
+                          />
+                          <span className="text-xs text-gray-600">
+                            {policy.enabled ? "Enabled" : "Disabled"}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          className="font-medium text-secondary hover:underline"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEdit(policy.policy_id);
+                          }}
+                        >
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+          {!loading && policies.length > 0 && (
+            <p className="text-xs text-gray-500">
+              {filtered.length} of {policies.length} policies
+            </p>
+          )}
+        </>
+      )}
+
+      {/* ------------------------------------------------------------ detail */}
+      {screen === "detail" && selected && (
+        <div className="space-y-4">
+          <div className="flex gap-6 border-b border-gray-200" role="tablist">
+            {(["overview", "json"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={detailTab === tab}
+                onClick={() => setDetailTab(tab)}
+                className={`-mb-px border-b-2 pb-2.5 text-sm font-medium transition ${
+                  detailTab === tab
+                    ? "border-secondary text-gray-900"
+                    : "border-transparent text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                {tab === "overview" ? "Overview" : "JSON"}
+              </button>
+            ))}
+          </div>
+
+          {detailTab === "overview" ? (
+            <div className="space-y-4">
+              <SectionCard title="Summary">
+                <p className="text-sm text-gray-700">{summarizePolicy(selected)}</p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <KeyValue label="Type">{typeLabel(selected.type)}</KeyValue>
+                  <KeyValue label="Phases">
+                    <PhaseTags phases={selected.phases} />
+                  </KeyValue>
+                  <KeyValue label="Evaluates">{targetLabel(selected.config.target)}</KeyValue>
+                  <KeyValue label="Created">
+                    {selected.created_at
+                      ? new Date(selected.created_at).toLocaleString("en-GB", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })
+                      : "—"}
+                  </KeyValue>
+                </div>
+              </SectionCard>
+
+              {selected.type === "HEURISTIC" ? (
+                <SectionCard
+                  title="Rules"
+                  description={
+                    typeof selected.config.max_length === "number"
+                      ? `Evaluated in order · scans up to ${selected.config.max_length.toLocaleString("en-US")} characters`
+                      : "Evaluated in order"
+                  }
+                >
+                  <RuleTable config={selected.config} />
+                </SectionCard>
+              ) : (
+                (() => {
+                  const ctx = contextSummary(selected.config);
+                  return (
+                    <>
+                      <SectionCard title="Decision settings">
+                        <div className="grid gap-4 sm:grid-cols-3">
+                          <KeyValue label="Blocks when confidence is at least">
+                            {ctx.minConfidence.charAt(0).toUpperCase() + ctx.minConfidence.slice(1)}
+                          </KeyValue>
+                          <KeyValue label="On classifier error">
+                            {ctx.failClosed ? "Fail closed (block)" : "Fail open (allow)"}
+                          </KeyValue>
+                          <KeyValue label="Step-up categories">
+                            {ctx.stepUpCategories ? (
+                              <span className="flex flex-wrap gap-1">
+                                {ctx.stepUpCategories.split(",").map((item) => (
+                                  <span key={item.trim()} className={`${TAG} break-all font-mono`}>
+                                    {item.trim()}
+                                  </span>
+                                ))}
+                              </span>
+                            ) : (
+                              "—"
+                            )}
+                          </KeyValue>
+                        </div>
+                      </SectionCard>
+                      <SectionCard title="Instructions">
+                        <pre className="whitespace-pre-wrap font-sans text-sm leading-6 text-gray-700">
+                          {ctx.instructions || "—"}
+                        </pre>
+                      </SectionCard>
+                      <SectionCard title="Definitions and category map">
+                        <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded bg-gray-50 px-4 py-3 font-mono text-xs leading-5 text-gray-700">
+                          {ctx.definitions || "—"}
+                        </pre>
+                      </SectionCard>
+                      <SectionCard title="Examples">
+                        <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded bg-gray-50 px-4 py-3 font-mono text-xs leading-5 text-gray-700">
+                          {ctx.examples || "—"}
+                        </pre>
+                      </SectionCard>
+                    </>
+                  );
+                })()
+              )}
+            </div>
+          ) : (
+            <SectionCard
+              title="Policy JSON"
+              description="Exactly what a guardrail version snapshots when it is published."
+              actions={<CopyButton value={JSON.stringify(selected.config, null, 2)} label="Copy JSON" />}
+            >
+              <pre className="max-h-[640px] overflow-auto rounded bg-gray-50 px-4 py-3 font-mono text-xs leading-5 text-gray-700">
+                {JSON.stringify(selected.config, null, 2)}
+              </pre>
+            </SectionCard>
+          )}
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------ edit */}
+      {screen === "edit" && selected && (
+        <div className="space-y-4">
+          <InlineNotice tone="info">
+            Changes are saved to the policy definition. Guardrails that use it apply the change in
+            their next published version; live versions keep the snapshot they were published with.
+          </InlineNotice>
+          {saveError && <InlineNotice tone="error">{saveError}</InlineNotice>}
+          <PolicyForm
+            key={`edit-${selected.policy_id}`}
+            mode="edit"
+            initial={{
+              name: selected.name,
+              policyId: selected.policy_id,
+              type: selected.type,
+              scope: selected.scope ?? "PROJECT",
+              enabled: selected.enabled,
+              phases: selected.phases,
+              config: selected.config,
+            }}
+            existingIds={existingIds}
+            submitting={saving}
+            submitLabel="Save changes"
+            onSubmit={handleEdit}
+            onCancel={() => openDetail(selected.policy_id)}
+          />
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------ create */}
+      {screen === "create" && (
+        <div className="space-y-6">
+          <section className="rounded border border-secondary/30 bg-secondary/5">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-secondary/20 px-5 py-4">
+              <div>
+                <h2 className="inline-flex items-center gap-2 text-sm font-semibold text-gray-900">
+                  <Sparkles className="h-4 w-4 text-secondary" /> Draft with AI
+                </h2>
+                <p className="mt-0.5 text-xs text-gray-600">
+                  Describe what the policy should protect against. UMAI drafts the instructions,
+                  categories and examples; you review and adjust them in the form below.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-500" htmlFor="draft-intent">
+                  What should this policy protect against?
+                </label>
+                <textarea
+                  id="draft-intent"
+                  className={`${INPUT} mt-1 h-24 leading-6`}
+                  placeholder="Example: Block customer account numbers, IBANs and card numbers in both customer messages and AI responses."
+                  value={intent}
+                  onChange={(event) => setIntent(event.target.value)}
+                />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500">Starting points</p>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {STARTERS.map((starter) => {
+                    const active = starter.id === starterId;
+                    return (
+                      <button
+                        key={starter.id}
+                        type="button"
+                        aria-pressed={active}
+                        title={starter.description}
+                        className={`rounded border px-2.5 py-1 text-xs font-medium transition ${
+                          active
+                            ? "border-secondary bg-secondary text-white"
+                            : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                        }`}
+                        onClick={() => {
+                          setStarterId(active ? null : starter.id);
+                          if (!active && !intent.trim()) setIntent(starter.defaultIntent);
+                        }}
+                      >
+                        {starter.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 text-sm font-medium text-secondary hover:underline"
+                onClick={() => setExamplesOpen((open) => !open)}
+                aria-expanded={examplesOpen}
+              >
+                {examplesOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                Examples and tailoring
+              </button>
+              {examplesOpen && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500" htmlFor="draft-blocked">
+                      Should be blocked
+                    </label>
+                    <textarea
+                      id="draft-blocked"
+                      className={`${INPUT} mt-1 h-28 font-mono text-xs leading-5`}
+                      placeholder={"TR33 0006 1005 1978 6457 8413 26\nAccount no: 1234567890"}
+                      value={blockedExamplesText}
+                      onChange={(event) => setBlockedExamplesText(event.target.value)}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">One example per line.</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500" htmlFor="draft-allowed">
+                      Should be allowed
+                    </label>
+                    <textarea
+                      id="draft-allowed"
+                      className={`${INPUT} mt-1 h-28 font-mono text-xs leading-5`}
+                      placeholder={"What is my account balance?\nHow do I update my address?"}
+                      value={allowedExamplesText}
+                      onChange={(event) => setAllowedExamplesText(event.target.value)}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">One example per line.</p>
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-medium text-gray-500" htmlFor="draft-tailoring">
+                      Tailor it for your business
+                    </label>
+                    <textarea
+                      id="draft-tailoring"
+                      className={`${INPUT} mt-1 h-20 leading-6`}
+                      placeholder="Example: Account numbers are 10 digits and start with 1 or 2. Prefer redaction over blocking for outgoing responses."
+                      value={tailoring}
+                      onChange={(event) => setTailoring(event.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {draftError && <InlineNotice tone="error">{draftError}</InlineNotice>}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  className={BTN_PRIMARY}
+                  disabled={generating}
+                  onClick={handleGenerateDraft}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {generating ? "Drafting…" : draft ? "Regenerate draft" : "Generate draft"}
+                </button>
+                <p className="text-xs text-gray-500">
+                  Nothing is created until you save the form below.
+                </p>
+              </div>
+
+              {draft && (
+                <div className="rounded border border-gray-200 bg-white">
+                  <div className="border-b border-gray-200 px-4 py-3">
+                    <p className="text-sm font-semibold text-gray-900">{draft.name}</p>
+                    <p className="mt-0.5 text-sm text-gray-600">{draft.summary}</p>
+                  </div>
+                  <div className="grid gap-4 px-4 py-3 lg:grid-cols-2">
+                    <div>
+                      <p className="text-xs font-medium text-gray-500">Why it was drafted this way</p>
+                      <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sm text-gray-700">
+                        {draft.rationale.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-gray-500">Example decisions</p>
+                      <ul className="mt-1.5 space-y-1.5">
+                        {draft.previewExamples.map((example) => (
+                          <li
+                            key={`${example.decision}-${example.text}`}
+                            className="flex items-start justify-between gap-3 text-sm text-gray-700"
+                          >
+                            <span>{example.text}</span>
+                            <span className={example.decision === "BLOCK" ? TAG_RED : TAG_GREEN}>
+                              {example.decision}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  <p className="border-t border-gray-200 px-4 py-2 text-xs text-gray-500">
+                    The form below has been filled from this draft. Adjust anything before saving.
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {saveError && <InlineNotice tone="error">{saveError}</InlineNotice>}
+          <PolicyForm
+            key={`create-${formKey}`}
+            mode="create"
+            initial={formInitial}
+            existingIds={existingIds}
+            submitting={saving}
+            submitLabel="Create policy"
+            onSubmit={handleCreate}
+            onCancel={goList}
+          />
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------ library */}
+      {screen === "library" && (
+        <PolicyLibrary
+          items={library}
+          loading={libraryLoading}
+          error={libraryError}
+          deployedIds={existingIds}
+          deployingId={deployingTemplate}
+          onDeploy={handleDeploy}
+        />
+      )}
+
+      {pendingToggle && (
+        <ConfirmDialog
+          title={pendingToggle.enabled ? "Disable policy?" : "Enable policy?"}
+          confirmLabel={pendingToggle.enabled ? "Disable" : "Enable"}
+          danger={pendingToggle.enabled}
+          busy={toggling}
+          onCancel={() => (toggling ? undefined : setPendingToggle(null))}
+          onConfirm={confirmToggle}
+          body={
+            <>
+              <p>
+                <span className="font-medium text-gray-900">{pendingToggle.name}</span>{" "}
+                {pendingToggle.enabled
+                  ? "will be skipped at runtime by guardrails that include it."
+                  : "will run again inside guardrails that include it."}
+              </p>
+              <p className="mt-2">
+                The change applies when those guardrails publish their next version.
+              </p>
+            </>
+          }
+        />
+      )}
+    </div>
+  );
 }

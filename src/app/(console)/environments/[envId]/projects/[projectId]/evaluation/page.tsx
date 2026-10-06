@@ -1,16 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import {
-  AlertTriangle,
-  CheckCircle2,
-  Gauge,
-  LineChart,
-  RefreshCw,
-  ShieldCheck,
-  UploadCloud,
-} from "lucide-react";
+import { Play, RefreshCw, UploadCloud } from "lucide-react";
 import { useConsole } from "src/app/(console)/console-context";
 import {
   createEvaluationRun,
@@ -26,17 +18,61 @@ import {
   type Guardrail,
   type PolicyPhase,
 } from "src/lib/api";
+import {
+  BTN_PRIMARY,
+  DecisionTag,
+  EmptyState,
+  INPUT,
+  InlineNotice,
+  KeyValue,
+  LABEL,
+  SectionCard,
+  TAG,
+  TAG_GREEN,
+  TAG_RED,
+  decisionLabel,
+} from "src/app/(console)/console-ui";
 
 type DatasetMode = "preset" | "upload";
 
+const CASE_PAGE_SIZE = 50;
+const POLL_INTERVAL_MS = 4000;
+
+const percentFormatter = new Intl.NumberFormat("en-US", { style: "percent", maximumFractionDigits: 0 });
+const dateFormatter = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" });
+
 const gradeFromAccuracy = (value: number | null | undefined) => {
-  if (value === null || value === undefined) return "-";
+  if (value === null || value === undefined) return null;
   if (value >= 0.9) return "A";
   if (value >= 0.8) return "B";
   if (value >= 0.7) return "C";
   if (value >= 0.6) return "D";
   return "F";
 };
+
+const formatPercent = (value: number | null | undefined) =>
+  value === null || value === undefined ? "—" : percentFormatter.format(value);
+
+const formatDate = (value: string | null | undefined) =>
+  value ? dateFormatter.format(new Date(value)) : "—";
+
+function StatusTag({ status }: { status: EvaluationRun["status"] }) {
+  const className =
+    status === "COMPLETED"
+      ? TAG_GREEN
+      : status === "FAILED"
+        ? TAG_RED
+        : "inline-flex items-center rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-800";
+  const label =
+    status === "COMPLETED"
+      ? "Completed"
+      : status === "FAILED"
+        ? "Failed"
+        : status === "RUNNING"
+          ? "Running"
+          : "Pending";
+  return <span className={className}>{label}</span>;
+}
 
 export default function EvaluationPage() {
   const { envId, projectId } = useParams() as { envId: string; projectId: string };
@@ -52,13 +88,24 @@ export default function EvaluationPage() {
   const [phase, setPhase] = useState<PolicyPhase>("PRE_LLM");
   const [runName, setRunName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [openingRunId, setOpeningRunId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [missesOnly, setMissesOnly] = useState(false);
 
   const metrics = selectedRun?.metrics;
   const accuracy = metrics?.expected_action_accuracy ?? null;
   const blockRate = metrics?.total ? metrics.blocked / metrics.total : null;
   const allowRate = metrics?.total ? metrics.allowed / metrics.total : null;
+  const grade = gradeFromAccuracy(accuracy);
+
+  const guardrailName = useCallback(
+    (guardrailId: string) => guardrails.find((g) => g.guardrail_id === guardrailId)?.name ?? guardrailId,
+    [guardrails]
+  );
+  const selectedSet = useMemo(() => sets.find((item) => item.id === selectedSetId) ?? null, [selectedSetId, sets]);
 
   useEffect(() => {
     if (!tenantId || !envId || !projectId) return;
@@ -72,466 +119,564 @@ export default function EvaluationPage() {
       .then(([guardrailResult, setsResult, runsResult]) => {
         if (guardrailResult.status === "fulfilled") {
           setGuardrails(guardrailResult.value);
-          setSelectedGuardrailId(
-            (current) => current || guardrailResult.value[0]?.guardrail_id || ""
-          );
+          setSelectedGuardrailId((current) => current || guardrailResult.value[0]?.guardrail_id || "");
         }
         if (setsResult.status === "fulfilled") {
           setSets(setsResult.value);
           setSelectedSetId((current) => current || setsResult.value[0]?.id || "");
         }
-        if (runsResult.status === "fulfilled") {
-          setRuns(runsResult.value);
+        if (runsResult.status === "fulfilled") setRuns(runsResult.value);
+        if ([guardrailResult, setsResult, runsResult].some((r) => r.status === "rejected")) {
+          setError("Some evaluation data could not be loaded.");
         }
       })
-      .catch(() => setError("Failed to load evaluation data."))
       .finally(() => setLoading(false));
   }, [tenantId, envId, projectId]);
 
+  // Koşan bir run seçiliyken durumu periyodik tazele.
   useEffect(() => {
     if (!tenantId || !selectedRun?.id) return;
+    if (selectedRun.status !== "RUNNING" && selectedRun.status !== "PENDING") return;
     let active = true;
-    const interval = setInterval(async () => {
-      if (!active) return;
-      if (selectedRun.status !== "RUNNING" && selectedRun.status !== "PENDING") {
-        return;
-      }
+    const interval = window.setInterval(async () => {
       try {
-        const fresh = await fetchEvaluationRun(tenantId, selectedRun.id, 50);
+        const fresh = await fetchEvaluationRun(tenantId, selectedRun.id, CASE_PAGE_SIZE);
         if (!active) return;
         setSelectedRun(fresh);
         setRuns((prev) => prev.map((run) => (run.id === fresh.id ? fresh : run)));
       } catch {
-        // ignore polling errors
+        /* polling errors are ignored */
       }
-    }, 4000);
+    }, POLL_INTERVAL_MS);
     return () => {
       active = false;
-      clearInterval(interval);
+      window.clearInterval(interval);
     };
   }, [tenantId, selectedRun]);
 
+  const refreshRuns = async () => {
+    if (!tenantId) return;
+    setRefreshing(true);
+    try {
+      setRuns(await fetchEvaluationRuns(tenantId, envId, projectId));
+    } catch {
+      setError("Runs could not be refreshed.");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const openRun = async (runId: string) => {
+    if (!tenantId) return;
+    setOpeningRunId(runId);
+    try {
+      setSelectedRun(await fetchEvaluationRun(tenantId, runId, CASE_PAGE_SIZE));
+      setMissesOnly(false);
+    } catch {
+      setError("The run could not be loaded.");
+    } finally {
+      setOpeningRunId(null);
+    }
+  };
+
   const handleRun = async () => {
     if (!tenantId || !envId || !projectId) return;
-    if (!selectedGuardrailId) {
-      setError("Select a guardrail before running evaluation.");
-      return;
-    }
-    if (datasetMode === "preset" && !selectedSetId) {
-      setError("Select an evaluation set.");
-      return;
-    }
-    if (datasetMode === "upload" && !uploadFile) {
-      setError("Upload a JSONL file.");
-      return;
-    }
+    setFormError(null);
+    if (!selectedGuardrailId) return setFormError("Select a guardrail.");
+    if (datasetMode === "preset" && !selectedSetId) return setFormError("Select an evaluation set.");
+    if (datasetMode === "upload" && !uploadFile) return setFormError("Choose a JSONL file to upload.");
 
     setSubmitting(true);
-    setError(null);
     try {
       const formData = new FormData();
       formData.append("environment_id", envId);
       formData.append("project_id", projectId);
       formData.append("guardrail_id", selectedGuardrailId);
       formData.append("phase", phase);
-      if (runName.trim()) {
-        formData.append("name", runName.trim());
-      }
-      if (datasetMode === "preset") {
-        formData.append("dataset_id", selectedSetId);
-      } else if (uploadFile) {
-        formData.append("file", uploadFile);
-      }
+      if (runName.trim()) formData.append("name", runName.trim());
+      if (datasetMode === "preset") formData.append("dataset_id", selectedSetId);
+      else if (uploadFile) formData.append("file", uploadFile);
       const run = await createEvaluationRun(tenantId, formData);
       setRuns((prev) => [run, ...prev]);
-      const detail = await fetchEvaluationRun(tenantId, run.id, 50);
-      setSelectedRun(detail);
+      setSelectedRun(await fetchEvaluationRun(tenantId, run.id, CASE_PAGE_SIZE));
+      setMissesOnly(false);
       setRunName("");
     } catch {
-      setError("Failed to start evaluation.");
+      setFormError("The evaluation could not be started.");
     } finally {
       setSubmitting(false);
     }
   };
 
-  const sortedRuns = useMemo(() => runs, [runs]);
+  const confusion = useMemo(() => {
+    const table = metrics?.action_confusion;
+    if (!table) return null;
+    const expected = Object.keys(table);
+    const actualSet = new Set<string>();
+    expected.forEach((key) => Object.keys(table[key]).forEach((actual) => actualSet.add(actual)));
+    const actual = Array.from(actualSet);
+    return { expected, actual, table };
+  }, [metrics]);
+
+  const visibleCases = useMemo(() => {
+    if (!selectedRun) return [];
+    return missesOnly
+      ? selectedRun.cases.filter((item) => item.expected_action_match === false)
+      : selectedRun.cases;
+  }, [missesOnly, selectedRun]);
+
+  const missCount = selectedRun?.cases.filter((item) => item.expected_action_match === false).length ?? 0;
 
   return (
-    <div className="space-y-10 fade-up">
-      <header className="space-y-2">
-        <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-secondary/70">
-          Evaluation
+    <div className="space-y-6">
+      <header className="border-b border-gray-200 pb-5">
+        <h1 className="text-2xl font-semibold text-gray-900">Evaluation</h1>
+        <p className="mt-1 text-sm text-gray-500">
+          Run a labelled prompt set against a guardrail version and measure how often the decision
+          matched the expected outcome.
         </p>
-        <h2 className="font-display text-4xl font-bold text-ink tracking-tight">
-          Guardrail evaluation
-        </h2>
-        <p className="text-sm text-slate max-w-2xl">
-          Run evaluation suites against guardrails, upload custom JSONL datasets, and
-          review accuracy and block rates in a single dashboard.
-        </p>
-        {error && <p className="text-xs text-red-600">{error}</p>}
       </header>
 
-      <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm space-y-6">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-ink">Start a new evaluation</h3>
-            <div className="text-xs font-semibold text-slate flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-secondary" />
-              PyRIT-backed
-            </div>
-          </div>
+      {error && (
+        <InlineNotice tone="error" onDismiss={() => setError(null)}>
+          {error}
+        </InlineNotice>
+      )}
 
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(380px,2fr)]">
+        <SectionCard
+          title="New evaluation"
+          description="Each prompt is sent through the guardrail exactly like live traffic."
+          actions={<span className={TAG}>Powered by PyRIT</span>}
+        >
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate">Guardrail</label>
+            <div>
+              <label className={LABEL} htmlFor="eval-guardrail">
+                Guardrail
+              </label>
               <select
+                id="eval-guardrail"
+                className={`${INPUT} mt-1`}
                 value={selectedGuardrailId}
                 onChange={(event) => setSelectedGuardrailId(event.target.value)}
-                className="w-full rounded-xl border border-secondary/15 bg-slate-50 px-3 py-2 text-sm focus:border-secondary/40 focus:outline-none"
+                disabled={loading}
               >
                 {guardrails.map((guardrail) => (
                   <option key={guardrail.guardrail_id} value={guardrail.guardrail_id}>
-                    {guardrail.name} ({guardrail.guardrail_id})
+                    {guardrail.name} · v{guardrail.current_version}
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-gray-500">The current version is evaluated.</p>
             </div>
-
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate">Phase</label>
+            <div>
+              <label className={LABEL} htmlFor="eval-phase">
+                Phase
+              </label>
               <select
+                id="eval-phase"
+                className={`${INPUT} mt-1`}
                 value={phase}
                 onChange={(event) => setPhase(event.target.value as PolicyPhase)}
-                className="w-full rounded-xl border border-secondary/15 bg-slate-50 px-3 py-2 text-sm focus:border-secondary/40 focus:outline-none"
               >
-                {POLICY_PHASE_OPTIONS.map((phaseOption) => (
-                  <option key={phaseOption} value={phaseOption}>
-                    {POLICY_PHASE_LABELS[phaseOption]} ({phaseOption})
+                {POLICY_PHASE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {POLICY_PHASE_LABELS[option]}
                   </option>
                 ))}
               </select>
-              <p className="text-[11px] text-slate">
-                Action phases work best when uploaded JSONL cases include an `artifacts` array with
-                action metadata.
+              <p className="mt-1 text-xs text-gray-500">
+                Action phases need an <code className="font-mono">artifacts</code> array in each uploaded case.
               </p>
             </div>
           </div>
 
-          <div className="space-y-3">
-            <label className="text-xs font-semibold text-slate">Dataset</label>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setDatasetMode("preset")}
-                className={`rounded-full px-4 py-2 text-xs font-semibold ${
-                  datasetMode === "preset"
-                    ? "bg-secondary text-white shadow-accent"
-                    : "border border-slate/15 bg-white text-slate-600 hover:border-secondary/20 hover:text-secondary"
-                }`}
-              >
-                Use preset
-              </button>
-              <button
-                type="button"
-                onClick={() => setDatasetMode("upload")}
-                className={`rounded-full px-4 py-2 text-xs font-semibold ${
-                  datasetMode === "upload"
-                    ? "bg-secondary text-white shadow-accent"
-                    : "border border-slate/15 bg-white text-slate-600 hover:border-secondary/20 hover:text-secondary"
-                }`}
-              >
-                Upload JSONL
-              </button>
+          <div className="mt-5">
+            <p className={LABEL}>Dataset</p>
+            <div className="mt-1.5 inline-flex rounded border border-gray-300 bg-white p-0.5" role="tablist">
+              {(
+                [
+                  { id: "preset", label: "Built-in set" },
+                  { id: "upload", label: "Upload JSONL" },
+                ] as Array<{ id: DatasetMode; label: string }>
+              ).map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={datasetMode === option.id}
+                  onClick={() => setDatasetMode(option.id)}
+                  className={`rounded px-3 py-1 text-sm font-medium transition ${
+                    datasetMode === option.id
+                      ? "bg-secondary text-white"
+                      : "text-gray-700 hover:bg-gray-100"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
+
             {datasetMode === "preset" ? (
-              <select
-                value={selectedSetId}
-                onChange={(event) => setSelectedSetId(event.target.value)}
-                className="w-full rounded-xl border border-secondary/15 bg-slate-50 px-3 py-2 text-sm focus:border-secondary/40 focus:outline-none"
-              >
-                {sets.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} - {item.total_cases} prompts
-                  </option>
-                ))}
-              </select>
+              <div className="mt-3">
+                <select
+                  className={INPUT}
+                  value={selectedSetId}
+                  onChange={(event) => setSelectedSetId(event.target.value)}
+                  aria-label="Evaluation set"
+                >
+                  {sets.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name} · {item.total_cases} prompts
+                    </option>
+                  ))}
+                </select>
+                {selectedSet?.description && (
+                  <p className="mt-1 text-xs text-gray-500">{selectedSet.description}</p>
+                )}
+              </div>
             ) : (
-              <div className="border border-dashed border-secondary/25 rounded-2xl p-4 bg-secondary/5 space-y-2">
-                <div className="flex items-center gap-2 text-secondary">
-                  <UploadCloud className="w-4 h-4" />
-                  <span className="text-xs font-semibold">Upload JSONL</span>
-                </div>
+              <label className="mt-3 flex cursor-pointer flex-col items-center gap-2 rounded border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center transition hover:border-secondary">
+                <UploadCloud className="h-5 w-5 text-gray-400" />
+                <span className="text-sm font-medium text-gray-900">
+                  {uploadFile ? uploadFile.name : "Choose a .jsonl file"}
+                </span>
+                <span className="text-xs text-gray-500">
+                  One JSON object per line:{" "}
+                  <code className="font-mono">{'{"prompt": "…", "expected_action": "BLOCK"}'}</code>
+                </span>
                 <input
                   type="file"
                   accept=".jsonl"
+                  className="sr-only"
                   onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
-                  className="text-xs"
                 />
-                <p className="text-[11px] text-slate">
-                  Each line: {"{ \"prompt\": \"...\", \"expected_action\": \"BLOCK\" }"}
-                </p>
-              </div>
+              </label>
             )}
           </div>
 
-          <div className="grid gap-4 md:grid-cols-[1.4fr_0.6fr] items-end">
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate">Run name (optional)</label>
-              <input
-                value={runName}
-                onChange={(event) => setRunName(event.target.value)}
-                placeholder="e.g. Feb safety sweep"
-                className="w-full rounded-xl border border-secondary/15 bg-white px-3 py-2 text-sm focus:border-secondary/40 focus:outline-none"
-              />
+          <div className="mt-5">
+            <label className={LABEL} htmlFor="eval-name">
+              Run name <span className="font-normal text-gray-400">(optional)</span>
+            </label>
+            <input
+              id="eval-name"
+              className={`${INPUT} mt-1`}
+              value={runName}
+              onChange={(event) => setRunName(event.target.value)}
+              placeholder="e.g. Pre-release safety sweep"
+            />
+          </div>
+
+          {formError && (
+            <div className="mt-4">
+              <InlineNotice tone="error">{formError}</InlineNotice>
             </div>
+          )}
+
+          <div className="mt-5 flex items-center justify-between gap-3">
+            <p className="text-xs text-gray-500">
+              Results appear below and are kept in the run history.
+            </p>
             <button
               type="button"
+              className={`${BTN_PRIMARY} h-10 px-5`}
               onClick={handleRun}
-              disabled={submitting}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-secondary px-4 py-3 text-sm font-semibold text-white shadow-accent hover:bg-secondary/90 disabled:opacity-60"
+              disabled={submitting || loading}
             >
-              {submitting ? "Running..." : "Run evaluation"}
+              <Play className="h-4 w-4" />
+              {submitting ? "Starting…" : "Run evaluation"}
             </button>
           </div>
-        </div>
+        </SectionCard>
 
-        <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-ink">Recent runs</h3>
+        <SectionCard
+          title="Runs"
+          description={loading ? "Loading…" : `${runs.length} in this project`}
+          actions={
             <button
               type="button"
-              onClick={async () => {
-                if (!tenantId) return;
-                const next = await fetchEvaluationRuns(tenantId, envId, projectId);
-                setRuns(next);
-              }}
-              className="text-xs font-semibold text-secondary flex items-center gap-2 transition-colors hover:text-secondary/80"
+              className="inline-flex items-center gap-1 text-sm font-medium text-secondary hover:underline disabled:opacity-60"
+              onClick={refreshRuns}
+              disabled={refreshing}
             >
-              <RefreshCw className="w-3 h-3" /> Refresh
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} /> Refresh
             </button>
-          </div>
-          {loading && <p className="text-sm text-slate">Loading runs...</p>}
-          {!loading && sortedRuns.length === 0 && (
-            <p className="text-sm text-slate">No evaluations yet. Run one to get started.</p>
-          )}
-          <div className="space-y-3 max-h-[360px] overflow-y-auto pr-1">
-            {sortedRuns.map((run) => (
-              <button
-                key={run.id}
-                type="button"
-                onClick={async () => {
-                  if (!tenantId) return;
-                  const detail = await fetchEvaluationRun(tenantId, run.id, 50);
-                  setSelectedRun(detail);
-                }}
-                className={`w-full text-left rounded-2xl border p-4 transition ${
-                  selectedRun?.id === run.id
-                    ? "border-secondary/20 bg-secondary/5"
-                    : "border-slate/10 bg-white hover:border-secondary/15"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-ink">
-                      {run.name || run.dataset_id || run.guardrail_id}
-                    </p>
-                    <p className="text-xs text-slate">
-                      {run.phase} - {run.total_cases} prompts
-                    </p>
-                  </div>
-                  <span
-                    className={`text-[10px] font-semibold uppercase tracking-[0.2em] px-2 py-1 rounded-full ${
-                      run.status === "COMPLETED"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : run.status === "FAILED"
-                        ? "bg-rose-50 text-rose-700"
-                        : "bg-amber-50 text-amber-700"
-                    }`}
-                  >
-                    {run.status}
-                  </span>
-                </div>
-                {run.status !== "COMPLETED" && (
-                  <div className="mt-2 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-                    <div
-                      className="h-full bg-secondary"
-                      style={{
-                        width: `${
-                          run.total_cases ? (run.processed_cases / run.total_cases) * 100 : 0
-                        }%`,
-                      }}
-                    />
-                  </div>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold text-ink">Evaluation dashboard</h3>
-          {selectedRun?.status === "FAILED" && (
-            <div className="text-xs text-rose-600 flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4" />
-              {selectedRun.error_message || "Evaluation failed"}
-            </div>
-          )}
-        </div>
-
-        {!selectedRun ? (
-          <div className="rounded-3xl border border-secondary/10 bg-secondary/5 p-10 text-center text-sm text-slate">
-            Select a run to view results.
-          </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-4">
-              <div className="rounded-2xl border border-secondary/15 bg-secondary/5 p-4 shadow-sm">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-secondary/70">
-                  Grade
-                </p>
-                <p className="mt-2 text-3xl font-bold text-ink">
-                  {gradeFromAccuracy(accuracy)}
-                </p>
-                <p className="text-xs text-slate">
-                  Action accuracy {accuracy !== null && accuracy !== undefined ? `${Math.round(accuracy * 100)}%` : "-"}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-secondary/10 bg-white p-4 shadow-sm">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-slate/60">
-                  Block rate
-                </p>
-                <p className="mt-2 text-2xl font-bold text-ink">
-                  {blockRate !== null && blockRate !== undefined ? `${Math.round(blockRate * 100)}%` : "-"}
-                </p>
-                <p className="text-xs text-slate">
-                  {metrics?.blocked ?? 0} blocked of {metrics?.total ?? 0}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-secondary/10 bg-white p-4 shadow-sm">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-slate/60">
-                  Allow rate
-                </p>
-                <p className="mt-2 text-2xl font-bold text-ink">
-                  {allowRate !== null && allowRate !== undefined ? `${Math.round(allowRate * 100)}%` : "-"}
-                </p>
-                <p className="text-xs text-slate">
-                  {metrics?.allowed ?? 0} allowed of {metrics?.total ?? 0}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-secondary/10 bg-white p-4 shadow-sm">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-slate/60">
-                  Flagged
-                </p>
-                <p className="mt-2 text-2xl font-bold text-ink">
-                  {metrics?.flagged ?? 0}
-                </p>
-                <p className="text-xs text-slate">Requires review</p>
-              </div>
-            </div>
-
-            <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
-              <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm">
-                <div className="flex items-center gap-2 text-slate">
-                  <Gauge className="w-4 h-4 text-secondary" />
-                  <h4 className="text-sm font-semibold">Action confusion</h4>
-                </div>
-                <div className="mt-4 space-y-3 text-xs text-slate">
-                  {metrics?.action_confusion ? (
-                    Object.entries(metrics.action_confusion).map(([expected, actuals]) => (
-                      <div key={expected} className="flex items-center justify-between">
-                        <span className="font-semibold text-ink">Expected {expected}</span>
-                        <span className="text-slate">
-                          {Object.entries(actuals)
-                            .map(([actual, count]) => `${actual}: ${count}`)
-                            .join(" - ")}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <p>No expected labels were provided.</p>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm">
-                <div className="flex items-center gap-2 text-slate">
-                  <LineChart className="w-4 h-4 text-secondary" />
-                  <h4 className="text-sm font-semibold">Run summary</h4>
-                </div>
-                <div className="mt-4 space-y-3 text-xs text-slate">
-                  <div className="flex items-center justify-between">
-                    <span>Guardrail</span>
-                    <span className="font-semibold text-ink">{selectedRun.guardrail_id}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Version</span>
-                    <span className="font-semibold text-ink">v{selectedRun.guardrail_version}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Status</span>
-                    <span className="font-semibold text-ink">{selectedRun.status}</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Processed</span>
-                    <span className="font-semibold text-ink">
-                      {selectedRun.processed_cases}/{selectedRun.total_cases}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span>Phase</span>
-                    <span className="font-semibold text-ink">{selectedRun.phase}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-3xl border border-secondary/10 bg-white p-6 shadow-sm space-y-4">
-              <div className="flex items-center gap-2 text-slate">
-                <CheckCircle2 className="w-4 h-4 text-secondary" />
-                <h4 className="text-sm font-semibold">Sample results</h4>
-              </div>
-              <div className="overflow-x-auto rounded-2xl border border-secondary/10">
-                <table className="min-w-full text-xs text-slate">
-                  <thead className="bg-secondary/5">
-                    <tr className="text-left text-[10px] uppercase tracking-[0.2em] text-slate/60">
-                      <th className="pb-2 pr-4">Label</th>
-                      <th className="pb-2 pr-4">Prompt</th>
-                      <th className="pb-2 pr-4">Expected</th>
-                      <th className="pb-2 pr-4">Actual</th>
-                      <th className="pb-2 pr-4">Match</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selectedRun.cases.map((item) => (
-                      <tr key={item.id} className="border-t border-secondary/8">
-                        <td className="py-3 pr-4 font-semibold text-ink">
-                          {item.label || `#${item.index}`}
+          }
+        >
+          {!loading && runs.length === 0 ? (
+            <EmptyState>No evaluations yet. Start one on the left.</EmptyState>
+          ) : (
+            <div className="-mx-5 -my-4 max-h-[520px] overflow-y-auto">
+              <table className="w-full table-fixed text-sm">
+                <thead className="sticky top-0 bg-gray-50 text-left text-xs font-medium text-gray-500">
+                  <tr>
+                    <th className="px-5 py-2 font-medium">Run</th>
+                    <th className="w-[88px] px-3 py-2 text-right font-medium">Accuracy</th>
+                    <th className="w-[104px] px-3 py-2 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {runs.map((run) => {
+                    const active = selectedRun?.id === run.id;
+                    const progress = run.total_cases ? run.processed_cases / run.total_cases : 0;
+                    return (
+                      <tr
+                        key={run.id}
+                        onClick={() => void openRun(run.id)}
+                        className={`cursor-pointer transition-colors hover:bg-gray-50 ${active ? "bg-secondary/5" : ""}`}
+                      >
+                        <td className="px-5 py-2.5">
+                          <p className="truncate font-medium text-gray-900" title={run.name || run.dataset_id || run.id}>
+                            {run.name || run.dataset_id || run.id.slice(0, 8)}
+                          </p>
+                          <p className="truncate text-xs text-gray-500">
+                            {guardrailName(run.guardrail_id)} v{run.guardrail_version} · {POLICY_PHASE_LABELS[run.phase] ?? run.phase} · {run.total_cases} prompts
+                          </p>
+                          {(run.status === "RUNNING" || run.status === "PENDING") && (
+                            <div className="mt-1.5 h-1 w-full overflow-hidden rounded bg-gray-200">
+                              <div className="h-full bg-secondary" style={{ width: `${Math.round(progress * 100)}%` }} />
+                            </div>
+                          )}
                         </td>
-                        <td className="py-3 pr-4 max-w-[320px] text-slate">
-                          {item.prompt}
+                        <td className="px-3 py-2.5 text-right tabular-nums text-gray-900">
+                          {formatPercent(run.metrics?.expected_action_accuracy)}
                         </td>
-                        <td className="py-3 pr-4">{item.expected_action || "-"}</td>
-                        <td className="py-3 pr-4 font-semibold text-ink">
-                          {item.decision_action || "-"}
-                        </td>
-                        <td className="py-3 pr-4">
-                          {item.expected_action_match === null || item.expected_action_match === undefined ? (
-                            "-"
-                          ) : item.expected_action_match ? (
-                            <span className="text-emerald-600 font-semibold">Match</span>
+                        <td className="px-3 py-2.5">
+                          {openingRunId === run.id ? (
+                            <span className="text-xs text-gray-400">Opening…</span>
                           ) : (
-                            <span className="text-rose-600 font-semibold">Miss</span>
+                            <StatusTag status={run.status} />
                           )}
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </SectionCard>
+      </div>
+
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-gray-200 pb-3">
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">
+              {selectedRun ? selectedRun.name || selectedRun.dataset_id || "Evaluation run" : "Results"}
+            </h2>
+            {selectedRun && (
+              <p className="mt-0.5 text-sm text-gray-500">
+                {guardrailName(selectedRun.guardrail_id)} v{selectedRun.guardrail_version} ·{" "}
+                {POLICY_PHASE_LABELS[selectedRun.phase] ?? selectedRun.phase} · started{" "}
+                {formatDate(selectedRun.created_at)}
+              </p>
+            )}
+          </div>
+          {selectedRun && <StatusTag status={selectedRun.status} />}
+        </div>
+
+        {!selectedRun ? (
+          <EmptyState>Select a run to see its results.</EmptyState>
+        ) : (
+          <>
+            {selectedRun.status === "FAILED" && (
+              <InlineNotice tone="error">{selectedRun.error_message || "The evaluation failed."}</InlineNotice>
+            )}
+            {(selectedRun.status === "RUNNING" || selectedRun.status === "PENDING") && (
+              <InlineNotice tone="info">
+                Running — {selectedRun.processed_cases} of {selectedRun.total_cases} prompts processed. This
+                page refreshes automatically.
+              </InlineNotice>
+            )}
+
+            <div className="grid grid-cols-1 divide-y divide-gray-200 rounded border border-gray-200 bg-white sm:grid-cols-5 sm:divide-x sm:divide-y-0">
+              <div className="px-5 py-4">
+                <p className="text-xs font-medium text-gray-500">Action accuracy</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">{formatPercent(accuracy)}</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {grade ? `Grade ${grade}` : "No expected labels"}
+                  {metrics?.expected_action_total
+                    ? ` · ${metrics.expected_action_matches ?? 0} of ${metrics.expected_action_total} matched`
+                    : ""}
+                </p>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-xs font-medium text-gray-500">Block rate</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">{formatPercent(blockRate)}</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {metrics?.blocked ?? 0} of {metrics?.total ?? 0}
+                </p>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-xs font-medium text-gray-500">Allow rate</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">{formatPercent(allowRate)}</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {metrics?.allowed ?? 0} of {metrics?.total ?? 0}
+                </p>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-xs font-medium text-gray-500">Flagged</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">{metrics?.flagged ?? 0}</p>
+                <p className="mt-1 text-xs text-gray-500">Needs review</p>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-xs font-medium text-gray-500">Processed</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums text-gray-900">
+                  {selectedRun.processed_cases}
+                  <span className="text-base font-normal text-gray-500"> / {selectedRun.total_cases}</span>
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {selectedRun.completed_at ? `Finished ${formatDate(selectedRun.completed_at)}` : "In progress"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+              <SectionCard
+                title="Expected vs actual"
+                description="Rows are the expected decision, columns what the guardrail returned."
+              >
+                {confusion ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="text-left text-xs font-medium text-gray-500">
+                        <tr>
+                          <th className="px-3 py-2 font-medium">Expected ↓ / Actual →</th>
+                          {confusion.actual.map((actual) => (
+                            <th key={actual} className="px-3 py-2 text-right font-medium">
+                              {decisionLabel(actual)}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {confusion.expected.map((expected) => (
+                          <tr key={expected}>
+                            <td className="px-3 py-2">
+                              <DecisionTag action={expected} />
+                            </td>
+                            {confusion.actual.map((actual) => {
+                              const count = confusion.table[expected][actual] ?? 0;
+                              const isMatch = expected === actual;
+                              return (
+                                <td
+                                  key={actual}
+                                  className={`px-3 py-2 text-right tabular-nums ${
+                                    count === 0
+                                      ? "text-gray-300"
+                                      : isMatch
+                                        ? "font-semibold text-emerald-700"
+                                        : "font-semibold text-red-700"
+                                  }`}
+                                >
+                                  {count}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <EmptyState>No expected labels in this dataset, so accuracy cannot be computed.</EmptyState>
+                )}
+              </SectionCard>
+
+              <SectionCard title="Decisions">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {Object.entries(metrics?.actions ?? {}).map(([action, count]) => (
+                    <KeyValue key={action} label={decisionLabel(action)}>
+                      <span className="tabular-nums">{count}</span>
+                    </KeyValue>
+                  ))}
+                  {metrics?.expected_severity_accuracy != null && (
+                    <KeyValue label="Severity accuracy">{formatPercent(metrics.expected_severity_accuracy)}</KeyValue>
+                  )}
+                  {metrics?.expected_allowed_accuracy != null && (
+                    <KeyValue label="Allow/deny accuracy">{formatPercent(metrics.expected_allowed_accuracy)}</KeyValue>
+                  )}
+                  <KeyValue label="Run ID">
+                    <span className="font-mono text-xs">{selectedRun.id}</span>
+                  </KeyValue>
+                </div>
+              </SectionCard>
+            </div>
+
+            <SectionCard
+              title="Prompts"
+              description={
+                selectedRun.cases.length < selectedRun.total_cases
+                  ? `Showing the first ${selectedRun.cases.length} of ${selectedRun.total_cases}`
+                  : `${selectedRun.cases.length} prompts`
+              }
+              actions={
+                <label className="flex items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-gray-300 text-secondary focus:ring-secondary/30"
+                    checked={missesOnly}
+                    onChange={(event) => setMissesOnly(event.target.checked)}
+                  />
+                  Misses only{missCount > 0 ? ` (${missCount})` : ""}
+                </label>
+              }
+            >
+              <div className="-mx-5 -my-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500">
+                    <tr>
+                      <th className="px-5 py-2 font-medium">#</th>
+                      <th className="px-3 py-2 font-medium">Prompt</th>
+                      <th className="px-3 py-2 font-medium">Expected</th>
+                      <th className="px-3 py-2 font-medium">Actual</th>
+                      <th className="px-3 py-2 font-medium">Match</th>
+                      <th className="px-3 py-2 font-medium">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {visibleCases.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-5 py-8 text-center text-gray-500">
+                          {missesOnly ? "No misses — every prompt matched its expected decision." : "No prompts yet."}
+                        </td>
+                      </tr>
+                    ) : (
+                      visibleCases.map((item) => (
+                        <tr key={item.id}>
+                          <td className="whitespace-nowrap px-5 py-2.5 text-gray-600">
+                            {item.label || `#${item.index}`}
+                          </td>
+                          <td className="max-w-[420px] truncate px-3 py-2.5 text-gray-900" title={item.prompt}>
+                            {item.prompt}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <DecisionTag action={item.expected_action} />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <DecisionTag action={item.decision_action} />
+                          </td>
+                          <td className="px-3 py-2.5">
+                            {item.expected_action_match === null || item.expected_action_match === undefined ? (
+                              <span className="text-gray-400">—</span>
+                            ) : item.expected_action_match ? (
+                              <span className="text-xs font-medium text-emerald-700">Match</span>
+                            ) : (
+                              <span className="text-xs font-medium text-red-700">Miss</span>
+                            )}
+                          </td>
+                          <td className="max-w-[360px] truncate px-3 py-2.5 text-gray-600" title={item.decision_reason ?? undefined}>
+                            {item.decision_reason || "—"}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
-            </div>
-          </div>
+            </SectionCard>
+          </>
         )}
       </section>
     </div>
