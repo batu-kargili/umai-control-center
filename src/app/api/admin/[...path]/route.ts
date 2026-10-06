@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { mintAdminToken } from "src/lib/admin-token";
 import { getSessionUserFromRequest } from "src/lib/auth-session";
 import { proxyRequest } from "src/lib/proxy";
 
@@ -20,7 +21,22 @@ async function handle(
   if (!user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
-  return await proxyRequest(request, upstreamAdminBaseUrl(), params.path || []);
+  // The client's own Authorization header is never forwarded: umai-service must only see
+  // the short-lived admin token minted here for the signed-in operator.
+  let token: string | null;
+  try {
+    token = await mintAdminToken(user);
+  } catch (error) {
+    console.error("Control Center: admin token could not be issued", error);
+    return NextResponse.json(
+      { error: "Admin credentials are misconfigured" },
+      { status: 500 }
+    );
+  }
+  return await proxyRequest(request, upstreamAdminBaseUrl(), params.path || [], {
+    authorization: token ? `Bearer ${token}` : null,
+    forwardClientAuthorization: false,
+  });
 }
 
 export async function GET(
