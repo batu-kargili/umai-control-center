@@ -200,6 +200,7 @@ export default function AlertsPage() {
                 <th className="px-4 py-2.5 font-medium">Time</th>
                 <th className="px-4 py-2.5 font-medium">Decision</th>
                 <th className="px-4 py-2.5 font-medium">Severity</th>
+                <th className="px-4 py-2.5 font-medium">Agent</th>
                 <th className="px-4 py-2.5 font-medium">Category</th>
                 <th className="px-4 py-2.5 font-medium">Policy</th>
                 <th className="px-4 py-2.5 font-medium">Guardrail</th>
@@ -210,13 +211,13 @@ export default function AlertsPage() {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-400">
                     Loading alerts…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-8 text-center text-gray-500">
+                  <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
                     No alerts match these filters.
                   </td>
                 </tr>
@@ -235,6 +236,9 @@ export default function AlertsPage() {
                     </td>
                     <td className={`px-4 py-2.5 text-xs font-medium ${severityClass(alert.severity)}`}>
                       {severityLabel(alert.severity)}
+                    </td>
+                    <td className="max-w-[160px] truncate px-4 py-2.5 font-mono text-xs text-gray-600" title={alert.agent_id ?? undefined}>
+                      {alert.agent_id ?? <span className="font-sans text-gray-400">—</span>}
                     </td>
                     <td className="max-w-[200px] truncate px-4 py-2.5 text-gray-900" title={alert.category}>
                       {alert.category}
@@ -320,6 +324,13 @@ export default function AlertsPage() {
                 </KeyValue>
                 <KeyValue label="Guardrail">
                   <span className="font-mono text-xs">{selected.guardrail_id}</span>
+                </KeyValue>
+                <KeyValue label="Agent">
+                  {selected.agent_id ? (
+                    <span className="font-mono text-xs">{selected.agent_id}</span>
+                  ) : (
+                    "—"
+                  )}
                 </KeyValue>
                 <KeyValue label="Conversation">
                   {selected.workflow && selected.workflow !== projectId && selected.workflow !== "N/A" ? (

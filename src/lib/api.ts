@@ -279,6 +279,8 @@ export type AlertSeverity = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
 export interface AlertItem {
     id: string;
+    /** Agent the alert came from. Null where the channel reported none. */
+    agent_id: string | null;
     workflow: string;
     flow: string;
     category: string;
